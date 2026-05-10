@@ -12,7 +12,7 @@
 
 ### 环境要求
 
-- Python >= 3.9
+- Python >= 3.9（已在 Python 3.14 验证）
 - Node.js >= 18
 - FFmpeg（已加入 PATH）
 
