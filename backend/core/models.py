@@ -33,6 +33,12 @@ class FormatOption(BaseModel):
         return int(v)
 
 
+class VideoPart(BaseModel):
+    index: int
+    title: str
+    duration: Optional[int] = None
+
+
 class VideoInfo(BaseModel):
     title: str
     webpage_url: str
@@ -45,6 +51,7 @@ class VideoInfo(BaseModel):
     upload_date: Optional[str] = None
     extractor: Optional[str] = None
     formats: list[FormatOption] = []
+    parts: list[VideoPart] = []
 
     @field_validator('view_count', mode='before')
     @classmethod

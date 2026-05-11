@@ -2,10 +2,172 @@ import yt_dlp
 import uuid
 import os
 import math
+import tempfile
 from typing import Optional, Callable
 from asyncio import Queue
 
-from .models import VideoInfo, FormatOption, ProgressData
+from .models import VideoInfo, FormatOption, ProgressData, VideoPart
+
+
+def _is_bilibili(url: str) -> bool:
+    return 'bilibili.com' in url or 'b23.tv' in url
+
+
+def _fetch_bilibili_parts(url: str) -> list[VideoPart]:
+    import re
+    import json
+    import urllib.request
+    m = re.search(r'(BV\w+)', url)
+    if not m:
+        return []
+    bvid = m.group(1)
+    try:
+        req = urllib.request.Request(
+            f'https://api.bilibili.com/x/player/pagelist?bvid={bvid}',
+            headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': 'https://www.bilibili.com/',
+            }
+        )
+        resp = urllib.request.urlopen(req, timeout=10)
+        data = json.loads(resp.read())
+        if data.get('code') != 0 or not data.get('data'):
+            return []
+        pages = data['data']
+        if len(pages) <= 1:
+            return []
+        return [VideoPart(index=p['page'], title=p['part'], duration=p.get('duration')) for p in pages]
+    except Exception:
+        return []
+
+
+def _patch_bilibili_extractor():
+    """
+    两个补丁解决 Bilibili 未登录限制：
+    1. 网页 412 补丁：服务器 IP 被封时，从 API 获取视频数据构造假网页，让提取器正常运行。
+    2. 画质补丁：WBI 签名接口对未登录用户限制到 480p，改用非 WBI 接口 + try_look=1 可获取 1080p/720p。
+    """
+    import re
+    import json
+    import urllib.request
+    from yt_dlp.extractor.bilibili import BiliBiliIE
+
+    if getattr(BiliBiliIE, '_patched_412', False):
+        return
+
+    # --- 补丁 1：网页 412 时用 API 数据构造假网页 ---
+    _orig_webpage = BiliBiliIE._download_webpage_handle
+
+    def _fetch_video_info(bvid: str) -> dict:
+        req = urllib.request.Request(
+            f'https://api.bilibili.com/x/web-interface/view?bvid={bvid}',
+            headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                'Referer': 'https://www.bilibili.com/',
+            }
+        )
+        resp = urllib.request.urlopen(req, timeout=15)
+        return json.loads(resp.read())
+
+    def _patched_webpage(self, url_or_request, *args, **kwargs):
+        try:
+            return _orig_webpage(self, url_or_request, *args, **kwargs)
+        except Exception as e:
+            if '412' not in str(e):
+                raise
+            url = (url_or_request if isinstance(url_or_request, str)
+                   else getattr(url_or_request, 'url', str(url_or_request)))
+            m = re.search(r'(BV\w+)', url)
+            if not m:
+                raise
+            api_resp = _fetch_video_info(m.group(1))
+            if api_resp.get('code') != 0:
+                raise
+            initial_state = {'videoData': api_resp['data']}
+            fake_webpage = f'window.__INITIAL_STATE__={json.dumps(initial_state)};'
+
+            class _FakeUrlh:
+                pass
+            fake = _FakeUrlh()
+            fake.url = url
+            return fake_webpage, fake
+
+    BiliBiliIE._download_webpage_handle = _patched_webpage
+
+    # --- 补丁 2：未登录时用非 WBI 接口 + try_look=1 获取高清画质 ---
+    _orig_playinfo = BiliBiliIE._download_playinfo
+
+    def _patched_playinfo(self, bvid, cid, headers=None, query=None):
+        if self.is_logged_in:
+            return _orig_playinfo(self, bvid, cid, headers=headers, query=query)
+        params = {
+            'bvid': bvid, 'cid': cid,
+            'qn': 0, 'fnval': 4048, 'fourk': 1,
+            'try_look': 1, 'platform': 'pc',
+        }
+        if query:
+            params.update(query)
+        return self._download_json(
+            'https://api.bilibili.com/x/player/playurl', bvid,
+            query=params, headers=headers,
+            note=f'Downloading video formats for cid {cid}')['data']
+
+    BiliBiliIE._download_playinfo = _patched_playinfo
+    BiliBiliIE._patched_412 = True
+
+
+_patch_bilibili_extractor()
+
+
+def _patch_douyin_extractor():
+    """
+    抖音 web API 需要 JavaScript 生成的 cookie（s_v_web_id），服务器环境无法获取。
+    此补丁在 web API 失败时，降级到 api.amemv.com 移动端 API（无需 cookie）。
+    """
+    import random
+    import urllib.request
+    import json
+    from yt_dlp.extractor.tiktok import DouyinIE
+    from yt_dlp.utils import ExtractorError
+
+    if getattr(DouyinIE, '_patched_amemv', False):
+        return
+
+    _orig = DouyinIE._real_extract
+
+    def _fetch_via_amemv(video_id: str):
+        url = (
+            f'https://api.amemv.com/aweme/v1/feed/?aweme_id={video_id}'
+            f'&device_id={random.randint(10**18, 10**19)}'
+            f'&iid={random.randint(10**18, 10**19)}'
+            '&version_code=350103&app_name=aweme&channel=googleplay'
+            '&device_platform=android&os=android'
+        )
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'com.ss.android.ugc.aweme/350103 (Linux; U; Android 13; zh_CN; Pixel 7; Build/TQ3A.230901.001)',
+        })
+        resp = urllib.request.urlopen(req, timeout=15)
+        data = json.loads(resp.read())
+        items = data.get('aweme_list') or []
+        return items[0] if items else None
+
+    def _patched(self, url):
+        try:
+            return _orig(self, url)
+        except Exception as e:
+            if 'Fresh cookies' not in str(e) and 'cookie' not in str(e).lower():
+                raise
+            video_id = self._match_id(url)
+            detail = _fetch_via_amemv(video_id)
+            if not detail:
+                raise ExtractorError('无法获取抖音视频信息，请稍后重试', expected=True)
+            return self._parse_aweme_video_app(detail)
+
+    DouyinIE._real_extract = _patched
+    DouyinIE._patched_amemv = True
+
+
+_patch_douyin_extractor()
 
 
 def _format_filesize(size_bytes: Optional[int]) -> Optional[str]:
@@ -74,6 +236,7 @@ class VideoDownloader:
             'quiet': True,
             'no_warnings': True,
             'skip_download': True,
+            'noplaylist': True,
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -182,6 +345,8 @@ class VideoDownloader:
                 label=label,
             ))
 
+        parts = _fetch_bilibili_parts(url) if _is_bilibili(url) else []
+
         return VideoInfo(
             title=info.get('title', ''),
             webpage_url=info.get('webpage_url', url),
@@ -194,14 +359,109 @@ class VideoDownloader:
             upload_date=info.get('upload_date'),
             extractor=info.get('extractor'),
             formats=formats,
+            parts=parts,
         )
 
-    def download(self, url: str, format_id: str, task_id: Optional[str] = None) -> str:
+    def _download_concat_parts(self, url: str, format_id: str, task_id: str, task_dir: str,
+                               selected_indices: Optional[list] = None) -> str:
+        """逐P下载后用 ffmpeg concat 合并为单文件。"""
+        import re as _re
+        import glob as _glob
+        import subprocess
+
+        parts = _fetch_bilibili_parts(url)
+        bv_match = _re.search(r'(BV\w+)', url)
+        if not bv_match or not parts:
+            raise Exception('无法获取分P列表')
+        bvid = bv_match.group(1)
+
+        if selected_indices:
+            allowed = set(selected_indices)
+            parts = [p for p in parts if p.index in allowed]
+        if not parts:
+            raise Exception('选中的分P不存在')
+
+        total = len(parts)
+        part_files = []
+        _video_exts = {'.mp4', '.mkv', '.webm', '.flv', '.avi', '.m4v', '.mov'}
+
+        for i, part in enumerate(parts):
+            part_url = f'https://www.bilibili.com/video/{bvid}?p={part.index}'
+            part_dir = os.path.join(task_dir, f'p{part.index:03d}')
+            os.makedirs(part_dir, exist_ok=True)
+
+            ydl_opts = {
+                'format': format_id,
+                'outtmpl': os.path.join(part_dir, '%(title).80s.%(ext)s'),
+                'merge_output_format': 'mp4',
+                'quiet': True,
+                'no_warnings': True,
+                'noplaylist': True,
+                'retries': 3,
+                'fragment_retries': 3,
+                'concurrent_fragment_downloads': 4,
+            }
+            if self.ffmpeg_location:
+                ydl_opts['ffmpeg_location'] = self.ffmpeg_location
+
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.extract_info(part_url, download=True)
+
+            candidates = [
+                f for f in _glob.glob(os.path.join(part_dir, '*'))
+                if os.path.isfile(f) and os.path.splitext(f)[1].lower() in _video_exts
+            ]
+            if candidates:
+                part_files.append(max(candidates, key=os.path.getsize))
+
+            queue = self._progress_queues.get(task_id)
+            if queue:
+                queue.put_nowait(ProgressData(
+                    status='downloading',
+                    percent=round((i + 1) / total * 90, 1),
+                    speed=f'P{part.index}/{total}',
+                ))
+
+        if not part_files:
+            raise Exception('没有成功下载任何分P')
+        if len(part_files) == 1:
+            return part_files[0]
+
+        concat_list = os.path.join(task_dir, 'concat_list.txt')
+        with open(concat_list, 'w', encoding='utf-8') as f:
+            for pf in part_files:
+                f.write(f"file '{pf}'\n")
+
+        output_file = os.path.join(task_dir, 'merged.mp4')
+        ffmpeg_bin = self.ffmpeg_location or 'ffmpeg'
+        result = subprocess.run(
+            [ffmpeg_bin, '-f', 'concat', '-safe', '0', '-i', concat_list,
+             '-c', 'copy', output_file, '-y'],
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            raise Exception('ffmpeg 合并失败: ' + result.stderr.decode(errors='replace')[-200:])
+        return output_file
+
+    def download(self, url: str, format_id: str, task_id: Optional[str] = None,
+                 concat_parts: bool = False, selected_parts: Optional[list] = None) -> str:
         """下载视频，返回下载完成的文件路径。"""
+        import re as _re
         if task_id is None:
             task_id = uuid.uuid4().hex[:12]
 
-        output_template = os.path.join(self.output_dir, '%(title).100s.%(ext)s')
+        task_dir = os.path.join(self.output_dir, task_id)
+        os.makedirs(task_dir, exist_ok=True)
+
+        if concat_parts:
+            file_path = self._download_concat_parts(url, format_id, task_id, task_dir,
+                                                    selected_indices=selected_parts)
+            queue = self._progress_queues.get(task_id)
+            if queue:
+                queue.put_nowait(ProgressData(status='completed', percent=100, file_path=file_path))
+            return file_path
+
+        output_template = os.path.join(task_dir, '%(title).100s.%(ext)s')
 
         ydl_opts = {
             'format': format_id,
@@ -210,6 +470,7 @@ class VideoDownloader:
             'merge_output_format': 'mp4',
             'quiet': True,
             'no_warnings': True,
+            'noplaylist': True,
             'continuedl': True,
             'retries': 3,
             'fragment_retries': 3,
@@ -220,25 +481,22 @@ class VideoDownloader:
             ydl_opts['ffmpeg_location'] = self.ffmpeg_location
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            file_path = ydl.prepare_filename(info)
+            ydl.extract_info(url, download=True)
 
-            # yt-dlp 可能修改扩展名（合并后），找实际存在的文件
-            if not os.path.exists(file_path):
-                base = os.path.splitext(file_path)[0]
-                for ext in ['.mp4', '.mkv', '.webm', '.flv', '.avi']:
-                    candidate = base + ext
-                    if os.path.exists(candidate):
-                        file_path = candidate
-                        break
+        import glob as _glob
+        _video_exts = {'.mp4', '.mkv', '.webm', '.flv', '.avi', '.m4v', '.mov'}
+        candidates = [
+            f for f in _glob.glob(os.path.join(task_dir, '*'))
+            if os.path.isfile(f) and os.path.splitext(f)[1].lower() in _video_exts
+        ]
+        if not candidates:
+            candidates = [f for f in _glob.glob(os.path.join(task_dir, '*')) if os.path.isfile(f)]
+        if not candidates:
+            raise Exception('下载完成但找不到输出文件')
+        file_path = max(candidates, key=os.path.getsize)
 
-            # 推送完成状态
-            queue = self._progress_queues.get(task_id)
-            if queue:
-                queue.put_nowait(ProgressData(
-                    status='completed',
-                    percent=100,
-                    file_path=file_path,
-                ))
+        queue = self._progress_queues.get(task_id)
+        if queue:
+            queue.put_nowait(ProgressData(status='completed', percent=100, file_path=file_path))
 
-            return file_path
+        return file_path
