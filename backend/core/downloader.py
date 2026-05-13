@@ -50,7 +50,7 @@ def _patch_bilibili_extractor():
     import re
     import json
     import urllib.request
-    from yt_dlp.extractor.bilibili import BiliBiliIE
+    from yt_dlp.extractor.bilibili import BiliBiliIE, BilibiliBaseIE
 
     if getattr(BiliBiliIE, '_patched_412', False):
         return
@@ -83,7 +83,11 @@ def _patch_bilibili_extractor():
             api_resp = _fetch_video_info(m.group(1))
             if api_resp.get('code') != 0:
                 raise
-            initial_state = {'videoData': api_resp['data']}
+            api_data = api_resp['data']
+            initial_state = {
+                'videoData': api_data,
+                'upData': api_data.get('owner', {}),
+            }
             fake_webpage = f'window.__INITIAL_STATE__={json.dumps(initial_state)};'
 
             class _FakeUrlh:
@@ -93,6 +97,7 @@ def _patch_bilibili_extractor():
             return fake_webpage, fake
 
     BiliBiliIE._download_webpage_handle = _patched_webpage
+    BilibiliBaseIE._download_webpage_handle = _patched_webpage
 
     # --- 补丁 2：未登录时用非 WBI 接口 + try_look=1 获取高清画质 ---
     _orig_playinfo = BiliBiliIE._download_playinfo
@@ -245,18 +250,7 @@ class VideoDownloader:
         raw_formats = info.get('formats', [])
         formats = []
 
-        # 1. 始终提供"最佳画质"选项：yt-dlp 自动选最高质量并合并音视频
-        formats.append(FormatOption(
-            format_id='bestvideo+bestaudio/best',
-            ext='mp4',
-            resolution='best',
-            is_combined=True,
-            is_best=True,
-            label='最佳画质（自动合并音视频）',
-            format_note='推荐',
-        ))
-
-        # 2. 按分辨率分组，每个分辨率保留最佳编码（优先 avc1 兼容性好）
+        # 1. 按分辨率分组，每个分辨率保留最佳编码（优先 avc1 兼容性好）
         #    对于视频流，下载时附加 +bestaudio 自动合并音频
         codec_priority = {'avc1': 0, 'h264': 0, 'hev1': 1, 'hevc': 1, 'av01': 2, 'vp9': 3}
         height_to_fmt: dict[int, dict] = {}
@@ -314,6 +308,13 @@ class VideoDownloader:
                 label=label,
             ))
 
+        # 2. 标记最高分辨率格式为"推荐"
+        for fmt in formats:
+            if not fmt.is_audio_only:
+                fmt.is_best = True
+                fmt.format_note = '推荐'
+                break
+
         # 3. 音频流：取最高码率的几个
         audio_fmts = [
             f for f in raw_formats
@@ -367,17 +368,13 @@ class VideoDownloader:
         # 必须将 filesize 调整为整个视频的大小，前端比例计算才能正确
         # 最可靠的方式：用码率(kbps) × 全视频时长(秒) 计算
 
-        # 找出最佳视频流和最佳音频流的码率（用于估算"最佳画质"）
-        best_video_tbr = 0
+        # 找出最佳音频流的码率（视频流估算文件大小时需加上）
         best_audio_tbr = 0
         for f in raw_formats:
             vcodec = f.get('vcodec', 'none') or 'none'
             acodec = f.get('acodec', 'none') or 'none'
             tbr = f.get('tbr') or 0
-            height = f.get('height')
-            if vcodec != 'none' and acodec == 'none' and height:
-                best_video_tbr = max(best_video_tbr, tbr)
-            elif acodec != 'none' and vcodec == 'none':
+            if acodec != 'none' and vcodec == 'none':
                 best_audio_tbr = max(best_audio_tbr, tbr)
 
         # 找一个有 filesize 的格式作为参考基准（给无码率的格式用）
@@ -388,20 +385,14 @@ class VideoDownloader:
                 break
 
         for fmt in formats:
-            if fmt.tbr and fmt.tbr > 0 and video_duration:
-                # 有码率：用码率 × 全视频时长（最准确）
-                fmt.filesize = int(fmt.tbr * 1000 / 8 * video_duration)
+            effective_tbr = fmt.tbr or 0
+            # 视频流格式下载时会自动合并 +bestaudio，估算时需加上音频码率
+            if fmt.is_video_only and best_audio_tbr > 0 and effective_tbr > 0:
+                effective_tbr += best_audio_tbr
+            if effective_tbr > 0 and video_duration:
+                fmt.filesize = int(effective_tbr * 1000 / 8 * video_duration)
             elif ref_bytes_per_kbps and fmt.tbr and fmt.tbr > 0 and video_duration:
-                # 无直接码率但有参考基准
                 fmt.filesize = int(ref_bytes_per_kbps * fmt.tbr)
-            # 无码率无参考的格式保持原值
-
-        # "最佳画质"：最佳视频流 + 最佳音频流
-        best_fmt = next((f for f in formats if f.is_best), None)
-        if best_fmt and video_duration:
-            combined_tbr = best_video_tbr + best_audio_tbr
-            if combined_tbr > 0:
-                best_fmt.filesize = int(combined_tbr * 1000 / 8 * video_duration)
 
         for fmt in formats:
             fmt.filesize_str = _format_filesize(fmt.filesize)
@@ -417,10 +408,9 @@ class VideoDownloader:
 
         # 估算每个分P的文件大小
         if parts and len(parts) > 1 and video_duration:
-            # 找一个有码率的格式作为参考
-            ref_fmt = next((f for f in formats if f.tbr and f.tbr > 0 and not f.is_best), None)
+            ref_fmt = next((f for f in formats if f.filesize and f.filesize > 0 and not f.is_best), None)
             if ref_fmt:
-                bytes_per_sec = ref_fmt.tbr * 1000 / 8
+                bytes_per_sec = ref_fmt.filesize / video_duration
                 for p in parts:
                     if p.duration:
                         p.filesize = int(bytes_per_sec * p.duration)
@@ -436,9 +426,9 @@ class VideoDownloader:
                     return ext
             return formats_list[0].get('ext', 'srt') if formats_list else 'srt'
 
-        # 手动字幕
+        # 手动字幕（跳过弹幕，弹幕不是真正的字幕）
         for lang, fmts in (info.get('subtitles') or {}).items():
-            if not fmts:
+            if not fmts or lang == 'danmaku':
                 continue
             ext = _pick_best_ext(fmts)
             name = next((f.get('name') or lang for f in fmts if f.get('name')), lang)

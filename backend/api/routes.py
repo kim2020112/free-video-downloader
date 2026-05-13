@@ -55,6 +55,10 @@ def _resolve_short_url(url: str) -> str:
             pass
         return url
 
+    # bilibili.com（无 www）→ www.bilibili.com，避免 yt-dlp 403
+    if re.match(r'https?://bilibili\.com/', url):
+        url = url.replace('://bilibili.com/', '://www.bilibili.com/', 1)
+
     return url
 
 from core.downloader import VideoDownloader
