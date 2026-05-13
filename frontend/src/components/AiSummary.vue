@@ -68,6 +68,43 @@ const mindmapContainer = ref(null)
 const isFullscreen = ref(false)
 let markmapInstance = null
 
+const MINDMAP_SVG_STYLE = `
+  .markmap-foreign { display: inline-block !important; }
+  foreignObject { overflow: visible !important; }
+  foreignObject div {
+    font-size: 15px !important;
+    font-family: 'Noto Sans SC', -apple-system, sans-serif !important;
+    color: #F8FAFC !important;
+    background: transparent !important;
+    padding: 2px 4px !important;
+    border-radius: 0 !important;
+    line-height: 1.6 !important;
+    font-weight: 500 !important;
+    text-shadow:
+      0 1px 1px rgba(15, 23, 42, 0.95),
+      0 0 8px rgba(15, 23, 42, 0.85),
+      0 0 16px rgba(15, 23, 42, 0.55) !important;
+  }
+  .markmap-link {
+    stroke: rgba(99, 102, 241, 0.48) !important;
+    stroke-width: 2px !important;
+  }
+  .markmap-node-circle {
+    fill: #6366F1 !important;
+    stroke: #A5B4FC !important;
+    stroke-width: 1.5px !important;
+  }
+`
+
+function injectMindmapStyle(svgEl) {
+  if (!svgEl) return
+  svgEl.querySelector('[data-mindmap-theme="true"]')?.remove()
+  const styleEl = document.createElementNS('http://www.w3.org/2000/svg', 'style')
+  styleEl.setAttribute('data-mindmap-theme', 'true')
+  styleEl.textContent = MINDMAP_SVG_STYLE
+  svgEl.insertBefore(styleEl, svgEl.firstChild)
+}
+
 watch(() => props.mindmapMarkdown, async (val) => {
   if (val) {
     await nextTick()
@@ -82,24 +119,7 @@ function renderMindmap(md) {
     const transformer = new Transformer()
     const { root } = transformer.transform(md)
     markmapInstance = Markmap.create(mindmapSvg.value, { autoFit: true, duration: 0 }, root)
-    // 注入深色主题样式到 SVG 内部
-    const styleEl = document.createElementNS('http://www.w3.org/2000/svg', 'style')
-    styleEl.textContent = `
-      .markmap-foreign { display: inline-block !important; }
-      foreignObject { overflow: visible !important; }
-      foreignObject div {
-        font-size: 16px !important;
-        font-family: 'Noto Sans SC', -apple-system, sans-serif !important;
-        color: #E2E8F0 !important;
-        background: rgba(15, 23, 42, 0.85) !important;
-        padding: 4px 8px !important;
-        border-radius: 4px !important;
-        line-height: 1.6 !important;
-      }
-      .markmap-link { stroke: rgba(99, 102, 241, 0.35) !important; }
-      .markmap-node-circle { fill: #6366F1 !important; stroke: #818CF8 !important; }
-    `
-    mindmapSvg.value.insertBefore(styleEl, mindmapSvg.value.firstChild)
+    injectMindmapStyle(mindmapSvg.value)
   } catch (e) {
     console.warn('思维导图渲染失败:', e)
   }
@@ -128,52 +148,70 @@ function getSafeFilename() {
   return (props.videoTitle || 'mindmap').replace(/[\\/*?:"<>|]/g, '_').substring(0, 80)
 }
 
-function buildExportableSvg() {
-  if (!mindmapSvg.value) return null
-  const cloned = mindmapSvg.value.cloneNode(true)
-  cloned.querySelectorAll('[transform]').forEach(el => {
-    const t = el.getAttribute('transform')
-    if (t && t.includes('NaN')) el.setAttribute('transform', 'translate(0,0) scale(1)')
-  })
-  cloned.querySelectorAll('foreignObject').forEach(fo => {
-    const textContent = fo.textContent?.trim() || ''
-    if (!textContent) { fo.remove(); return }
-    const x = parseFloat(fo.getAttribute('x')) || 0
-    const y = parseFloat(fo.getAttribute('y')) || 0
-    const h = parseFloat(fo.getAttribute('height')) || 20
-    const textEl = document.createElementNS('http://www.w3.org/2000/svg', 'text')
-    textEl.setAttribute('x', String(x + 6))
-    textEl.setAttribute('y', String(y + h / 2 + 1))
-    textEl.setAttribute('font-size', '16')
-    textEl.setAttribute('font-family', 'Noto Sans SC, -apple-system, sans-serif')
-    textEl.setAttribute('fill', '#E2E8F0')
-    textEl.setAttribute('font-weight', '500')
-    textEl.setAttribute('dominant-baseline', 'middle')
-    textEl.textContent = textContent
-    fo.parentNode.replaceChild(textEl, fo)
-  })
-  return cloned
+const EXPORT_TARGET_LONG_EDGE = 1600
+const EXPORT_PNG_LONG_EDGE = 3840
+const EXPORT_PADDING = 60
+const EXPORT_RENDER_SIZE = 2400
+const EXPORT_FONT_FAMILY = 'Microsoft YaHei, PingFang SC, Arial, sans-serif'
+
+function toFiniteNumber(value, fallback = 0) {
+  return Number.isFinite(value) ? value : fallback
 }
 
-function serializeSvg(svgEl) {
-  const serializer = new XMLSerializer()
-  let svgString = serializer.serializeToString(svgEl)
-  if (!svgString.includes('xmlns=')) {
-    svgString = svgString.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"')
-  }
-  const styles = document.querySelectorAll('style')
-  let markmapCss = ''
-  styles.forEach(s => {
-    if (s.textContent.includes('.markmap')) markmapCss += s.textContent
+function waitForRenderFrames(count = 2) {
+  return new Promise(resolve => {
+    const step = () => {
+      if (count <= 0) {
+        resolve()
+        return
+      }
+      count -= 1
+      requestAnimationFrame(step)
+    }
+    requestAnimationFrame(step)
   })
-  if (markmapCss) {
-    svgString = svgString.replace('>', `><defs><style>${markmapCss}</style></defs>`)
-  }
-  return svgString
 }
 
-function getContentBBox() {
-  const svgEl = mindmapSvg.value
+async function createExportStage() {
+  if (!props.mindmapMarkdown) return null
+
+  const mount = document.createElement('div')
+  mount.style.position = 'fixed'
+  mount.style.left = '-100000px'
+  mount.style.top = '0'
+  mount.style.visibility = 'hidden'
+  mount.style.pointerEvents = 'none'
+  mount.style.overflow = 'hidden'
+
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  svg.setAttribute('width', String(EXPORT_RENDER_SIZE))
+  svg.setAttribute('height', String(EXPORT_RENDER_SIZE))
+  svg.setAttribute('viewBox', `0 0 ${EXPORT_RENDER_SIZE} ${EXPORT_RENDER_SIZE}`)
+
+  mount.appendChild(svg)
+  document.body.appendChild(mount)
+
+  try {
+    const transformer = new Transformer()
+    const { root } = transformer.transform(props.mindmapMarkdown)
+    const instance = Markmap.create(svg, { autoFit: true, duration: 0 }, root)
+    injectMindmapStyle(svg)
+    await waitForRenderFrames(2)
+    instance.fit?.()
+    await waitForRenderFrames(2)
+    return { mount, svg, instance }
+  } catch (e) {
+    mount.remove()
+    throw e
+  }
+}
+
+function cleanupExportStage(stage) {
+  stage?.instance?.destroy?.()
+  stage?.mount?.remove()
+}
+
+function getContentBBox(svgEl) {
   const gRoot = svgEl.querySelector('g')
   if (gRoot) {
     try {
@@ -194,58 +232,174 @@ function getContentBBox() {
       }
     } catch {}
   }
+
   try {
     const bbox = svgEl.getBBox()
     if (bbox.width > 0 && bbox.height > 0) return bbox
   } catch {}
+
   return { x: 0, y: 0, width: 800, height: 600 }
 }
 
-function setFullViewBox(svgClone) {
-  const dims = getContentBBox()
-  const padding = 60
-  const vx = dims.x - padding; const vy = dims.y - padding
-  const vw = dims.width + padding * 2; const vh = dims.height + padding * 2
+function buildExportableSvg(svgSource) {
+  const cloned = svgSource.cloneNode(true)
+  cloned.removeAttribute('style')
+  cloned.removeAttribute('class')
+  Array.from(cloned.attributes)
+    .filter(attr => attr.name.startsWith('data-'))
+    .forEach(attr => cloned.removeAttribute(attr.name))
+
+  injectMindmapStyle(cloned)
+
+  cloned.querySelectorAll('[transform]').forEach(el => {
+    const t = el.getAttribute('transform')
+    if (t && t.includes('NaN')) {
+      el.setAttribute('transform', 'translate(0,0) scale(1)')
+    }
+  })
+
+  cloned.querySelectorAll('foreignObject').forEach(fo => {
+    const textContent = fo.textContent?.trim() || ''
+    if (!textContent) {
+      fo.remove()
+      return
+    }
+
+    const x = parseFloat(fo.getAttribute('x')) || 0
+    const y = parseFloat(fo.getAttribute('y')) || 0
+    const height = parseFloat(fo.getAttribute('height')) || 28
+
+    const textEl = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+    textEl.setAttribute('x', String(x + 6))
+    textEl.setAttribute('y', String(y + height / 2 + 1))
+    textEl.setAttribute('font-size', '15')
+    textEl.setAttribute('font-family', EXPORT_FONT_FAMILY)
+    textEl.setAttribute('fill', '#F8FAFC')
+    textEl.setAttribute('font-weight', '600')
+    textEl.setAttribute('dominant-baseline', 'middle')
+    textEl.setAttribute('paint-order', 'stroke fill')
+    textEl.setAttribute('stroke', '#0F172A')
+    textEl.setAttribute('stroke-opacity', '0.92')
+    textEl.setAttribute('stroke-width', '3')
+    textEl.setAttribute('stroke-linejoin', 'round')
+    textEl.textContent = textContent
+
+    fo.parentNode.replaceChild(textEl, fo)
+  })
+
+  return cloned
+}
+
+function ensureExportBackground(svgClone, { vx, vy, vw, vh }) {
+  const oldBg = svgClone.querySelector('[data-export-background="true"]')
+  oldBg?.remove()
+  const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+  bg.setAttribute('data-export-background', 'true')
+  bg.setAttribute('x', String(vx))
+  bg.setAttribute('y', String(vy))
+  bg.setAttribute('width', String(vw))
+  bg.setAttribute('height', String(vh))
+  bg.setAttribute('fill', '#0F172A')
+  svgClone.insertBefore(bg, svgClone.firstChild)
+}
+
+function serializeSvg(svgEl) {
+  const serializer = new XMLSerializer()
+  let svgString = serializer.serializeToString(svgEl)
+  if (!svgString.includes('xmlns=')) {
+    svgString = svgString.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"')
+  }
+  return svgString
+}
+
+function setExportViewBox(svgClone, dims, targetLongEdge = EXPORT_TARGET_LONG_EDGE) {
+  const safeX = toFiniteNumber(dims.x, 0)
+  const safeY = toFiniteNumber(dims.y, 0)
+  const safeWidth = Math.max(toFiniteNumber(dims.width, 800), 1)
+  const safeHeight = Math.max(toFiniteNumber(dims.height, 600), 1)
+
+  const vx = Math.floor(safeX - EXPORT_PADDING)
+  const vy = Math.floor(safeY - EXPORT_PADDING)
+  const vw = Math.max(Math.ceil(safeWidth + EXPORT_PADDING * 2), 1)
+  const vh = Math.max(Math.ceil(safeHeight + EXPORT_PADDING * 2), 1)
+
   svgClone.setAttribute('viewBox', `${vx} ${vy} ${vw} ${vh}`)
-  svgClone.setAttribute('width', String(vw))
-  svgClone.setAttribute('height', String(vh))
+  svgClone.setAttribute('preserveAspectRatio', 'xMidYMid meet')
+
+  const displayScale = targetLongEdge / Math.max(vw, vh)
+  const displayWidth = Math.max(Math.round(vw * displayScale), 1)
+  const displayHeight = Math.max(Math.round(vh * displayScale), 1)
+  svgClone.setAttribute('width', String(displayWidth))
+  svgClone.setAttribute('height', String(displayHeight))
+
+  ensureExportBackground(svgClone, { vx, vy, vw, vh })
   return { vw, vh }
 }
 
-function downloadSVG() {
-  if (!mindmapSvg.value) return
-  const exportSvg = buildExportableSvg()
-  if (!exportSvg) return
-  setFullViewBox(exportSvg)
-  const svgString = serializeSvg(exportSvg)
-  const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' })
-  triggerDownload(blob, `${getSafeFilename()} - 思维导图.svg`)
+async function downloadSVG() {
+  const stage = await createExportStage()
+  if (!stage) return
+
+  try {
+    const dims = getContentBBox(stage.svg)
+    const exportSvg = buildExportableSvg(stage.svg)
+    setExportViewBox(exportSvg, dims)
+    exportSvg.setAttribute('width', '100%')
+    exportSvg.setAttribute('height', 'auto')
+    exportSvg.setAttribute('style', 'display:block;background:#0F172A;max-width:100%;height:auto;')
+    const svgString = serializeSvg(exportSvg)
+    const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' })
+    triggerDownload(blob, `${getSafeFilename()} - 思维导图.svg`)
+  } catch (e) {
+    console.warn('SVG 导出失败:', e)
+  } finally {
+    cleanupExportStage(stage)
+  }
 }
 
-function downloadPNG() {
-  if (!mindmapSvg.value) return
-  const exportSvg = buildExportableSvg()
-  if (!exportSvg) return
-  const { vw, vh } = setFullViewBox(exportSvg)
-  const scale = Math.max(4, Math.ceil(3840 / vw))
-  const svgString = serializeSvg(exportSvg)
-  const canvas = document.createElement('canvas')
-  canvas.width = vw * scale; canvas.height = vh * scale
-  const ctx = canvas.getContext('2d')
-  ctx.fillStyle = '#0F172A'
-  ctx.fillRect(0, 0, canvas.width, canvas.height)
-  const img = new Image()
-  const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  img.onload = () => {
+async function downloadPNG() {
+  const stage = await createExportStage()
+  if (!stage) return
+
+  try {
+    const dims = getContentBBox(stage.svg)
+    const exportSvg = buildExportableSvg(stage.svg)
+    const { vw, vh } = setExportViewBox(exportSvg, dims)
+    const scale = Math.max(1, Math.ceil(EXPORT_PNG_LONG_EDGE / Math.max(vw, vh)))
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(Math.round(vw * scale), 1)
+    canvas.height = Math.max(Math.round(vh * scale), 1)
+
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    ctx.fillStyle = '#0F172A'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+    const svgString = serializeSvg(exportSvg)
+    const dataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgString)}`
+    const img = new Image()
+
+    await new Promise((resolve, reject) => {
+      img.onload = resolve
+      img.onerror = reject
+      img.src = dataUrl
+    })
+
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-    URL.revokeObjectURL(url)
-    canvas.toBlob((pngBlob) => {
-      if (pngBlob) triggerDownload(pngBlob, `${getSafeFilename()} - 思维导图.png`)
-    }, 'image/png')
+
+    const pngBlob = await new Promise(resolve => {
+      canvas.toBlob(resolve, 'image/png')
+    })
+
+    if (pngBlob) {
+      triggerDownload(pngBlob, `${getSafeFilename()} - 思维导图.png`)
+    }
+  } catch (e) {
+    console.warn('PNG 导出失败:', e)
+  } finally {
+    cleanupExportStage(stage)
   }
-  img.onerror = () => URL.revokeObjectURL(url)
-  img.src = url
 }
 
 function triggerDownload(blob, filename) {
@@ -555,6 +709,36 @@ const hasSubtitleSegments = computed(() =>
 .summary-text :deep(pre) { background: rgba(0,0,0,0.3); padding: 0.75rem 1rem; border-radius: 6px; overflow-x: auto; }
 .summary-text :deep(blockquote) { border-left-color: var(--accent-blue); }
 .summary-text :deep(a) { color: var(--accent-blue); }
+.summary-text :deep(ul),
+.summary-text :deep(ol),
+.chat-content :deep(ul),
+.chat-content :deep(ol) {
+  margin: 0.75rem 0;
+  padding-inline-start: 1.5rem;
+}
+.summary-text :deep(ul),
+.chat-content :deep(ul) {
+  list-style-type: disc;
+}
+.summary-text :deep(ol),
+.chat-content :deep(ol) {
+  list-style-type: decimal;
+}
+.summary-text :deep(li),
+.chat-content :deep(li) {
+  margin: 0.35rem 0;
+  padding-left: 0.2rem;
+}
+.summary-text :deep(ul ul),
+.summary-text :deep(ol ol),
+.summary-text :deep(ul ol),
+.summary-text :deep(ol ul),
+.chat-content :deep(ul ul),
+.chat-content :deep(ol ol),
+.chat-content :deep(ul ol),
+.chat-content :deep(ol ul) {
+  margin: 0.35rem 0 0;
+}
 
 /* 字幕展示 */
 .subtitle-toolbar { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
@@ -616,13 +800,18 @@ const hasSubtitleSegments = computed(() =>
 .mindmap-container :deep(.markmap-foreign) { display: inline-block !important; }
 .mindmap-container :deep(foreignObject) { overflow: visible !important; }
 .mindmap-container :deep(foreignObject div) {
-  font-size: 16px !important;
+  font-size: 15px !important;
   font-family: 'Noto Sans SC', -apple-system, sans-serif !important;
-  color: #E2E8F0 !important;
-  background: rgba(15, 23, 42, 0.85) !important;
-  padding: 4px 8px !important;
-  border-radius: 4px !important;
+  color: #F8FAFC !important;
+  background: transparent !important;
+  padding: 2px 4px !important;
+  border-radius: 0 !important;
   line-height: 1.6 !important;
+  font-weight: 500 !important;
+  text-shadow:
+    0 1px 1px rgba(15, 23, 42, 0.95),
+    0 0 8px rgba(15, 23, 42, 0.85),
+    0 0 16px rgba(15, 23, 42, 0.55) !important;
 }
 
 /* 全屏 */

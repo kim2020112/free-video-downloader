@@ -97,8 +97,13 @@ npm run dev
 - `_sse_generator` 使用 `asyncio.Queue` + `loop.call_soon_threadsafe` 实现跨线程实时流式传输，注意不要回退到 `list()` 缓冲方案
 - 无字幕时自动降级到 `summarize_from_description()`，基于视频标题和简介生成总结，前端会显示 `⚠️` 警告
 - `danmaku` 语言轨道的字幕在 `downloader.py` 中被过滤，不出现在前端字幕列表；弹幕 XML 通过 `_clean_danmaku_xml()` 专门解析
-- 思维导图渲染在 `AiSummary.vue` 的 `measureText()` 中，CJK 字符按 `fontSize * 1.0` 计算宽度，ASCII 按 `fontSize * 0.7`，修改 prompt 输出结构时需同步检查节点宽度是否够用
+- 思维导图渲染使用 `markmap-lib` + `markmap-view`，当前展示主题采用透明节点背景 + 浅色文字 + 深色描边/阴影；如需调整节点视觉，请同时检查页面展示和导出效果
 - 前端 Markdown 渲染使用 `marked` + `DOMPurify`，修改 `renderMarkdown()` 或在模板中新增 `v-html` 时注意 XSS 防护
+- 摘要区和问答区的 Markdown 列表缩进依赖 `AiSummary.vue` 中显式的 `ul` / `ol` / `li` 样式，不要假设 `prose` 默认样式在所有容器下都能稳定生效
+- 思维导图导出必须基于 `mindmapMarkdown` 离屏重新渲染，不能直接复用页面当前的缩放/平移状态，否则容易出现导出区域不全或尺寸失真
+- 导出边界计算必须在 SVG 仍挂载于 DOM 时完成；脱离文档后再调用 `getBBox()` / `getCTM()` 很容易得到错误结果
+- 导出阶段会把 `foreignObject` 转成纯 SVG `text` 后再生成最终 SVG / PNG；后续若修改 markmap 节点结构、字体大小或内边距，必须同步校验转换结果
+- PNG 导出策略是“先生成完整 SVG，再以内联 SVG 绘制到 Canvas”，目标长边固定为 4K（3840）；如后续改为引入外部字体、图片或其他跨域资源，需优先保证 SVG 仍可完全内联
 
 ### 新增平台兼容补丁
 

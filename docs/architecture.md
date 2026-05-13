@@ -11,6 +11,7 @@
 | AI 总结 | anthropic SDK + DeepSeek | 通过 Anthropic 兼容端点调用，支持流式 MessageStream（thinking + text 双轨） |
 | Markdown 渲染 | marked + DOMPurify | 轻量无依赖，XSS 防护，AI 输出结构化展示 |
 | 思维导图 | markmap-lib + markmap-view | 将 Markdown 列表渲染为交互式思维导图 |
+| 导图导出 | 原生 SVG + Canvas | SVG 走离屏重渲染与静态化导出，PNG 基于内联 SVG 生成 4K 位图，避免受展示区缩放影响 |
 | 进度推送 | WebSocket / SSE | 下载用 WebSocket（双向），AI 总结用 SSE（单向流式） |
 | 进程管理 | Uvicorn | 高性能 ASGI 服务器 |
 

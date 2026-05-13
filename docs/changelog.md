@@ -1,5 +1,33 @@
 # 变更记录
 
+## [2.2.1] - 2026-05-12
+
+### 修复
+
+- **AI 摘要 Markdown 列表缩进修复**（`frontend/src/components/AiSummary.vue`）：
+  - 为摘要区和问答区补充显式 `ul` / `ol` / `li` 样式，避免仅依赖 `prose` 默认样式
+  - 修复列表项全部贴左显示的问题，保证多级列表在深色主题下仍有稳定缩进和间距
+
+- **思维导图节点视觉修复**（`frontend/src/components/AiSummary.vue`）：
+  - 去掉节点文字后的半透明深色底块，改为透明背景 + 描边 / 阴影增强对比度
+  - 解决节点密集时背景块相互叠压，导致部分节点“忽明忽暗”的问题
+
+- **思维导图 SVG / PNG 导出修复**（`frontend/src/components/AiSummary.vue`）：
+  - 导出改为基于 `mindmapMarkdown` 离屏重新渲染，不再直接复用当前展示区的缩放和平移状态
+  - 在导出阶段仍挂载到 DOM 中测量真实内容边界，避免 `viewBox` 计算错误导致导出图被裁切或只剩背景
+  - 导出前将 `foreignObject` 文本节点转换为纯 SVG `text`，提升本地 SVG 打开兼容性，并降低 PNG 转 Canvas 时的兼容风险
+  - SVG 导出增加深色背景与响应式根尺寸，直接在浏览器打开本地文件时不再出现明显白边
+  - PNG 导出固定长边按 4K 目标生成，避免因页面当前缩放不同而出现尺寸失真或模糊
+
+### 技术细节
+
+- 新增离屏导出阶段：`createExportStage()` / `cleanupExportStage()`
+- 内容边界测量统一走 `getContentBBox()`，必须在导图实际挂载到文档时调用
+- 导出 SVG 统一通过 `buildExportableSvg()` 将交互态 SVG 转换为更稳定的静态产物
+- 后续若修改 markmap 节点 DOM 结构、字体大小或主题样式，必须同步验证 `foreignObject -> text` 转换结果与导出边界计算
+
+---
+
 ## [2.2.0] - 2026-05-12
 
 ### 修复
