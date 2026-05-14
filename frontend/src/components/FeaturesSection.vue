@@ -2,9 +2,9 @@
   <section class="features-section">
     <div class="features-container">
       <div class="features-header">
-        <h2 class="features-title">为什么选择 SaveAny</h2>
+        <h2 class="features-title">让视频成为你的知识库</h2>
         <p class="features-subtitle">
-          强大功能，简单操作，让视频下载变得轻而易举
+          AI 驱动的内容理解，将任何视频转化为可检索、可回顾的结构化知识
         </p>
       </div>
 
@@ -14,12 +14,12 @@
           <div class="feature-icon blue">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
             </svg>
           </div>
-          <h3 class="feature-title">国内平台全覆盖</h3>
+          <h3 class="feature-title">AI 智能总结</h3>
           <p class="feature-description">
-            B站、抖音、小红书、快手、微博等国内主流平台，以及 YouTube、TikTok 等海外平台，粘贴链接即下载
+            自动提取视频字幕，大模型生成精炼摘要，快速把握核心内容
           </p>
         </div>
 
@@ -28,12 +28,12 @@
           <div class="feature-icon cyan">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                d="M13 10V3L4 14h7v7l9-11h-7z" />
+                d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
             </svg>
           </div>
-          <h3 class="feature-title">3 秒极速解析</h3>
+          <h3 class="feature-title">结构化学习笔记</h3>
           <p class="feature-description">
-            基于 yt-dlp 引擎，解析速度快至 3 秒，支持多线程并发下载，速度领先同类工具
+            自动生成标题层级分明的 Markdown 笔记，支持代码块、重点高亮，一键导出
           </p>
         </div>
 
@@ -42,12 +42,12 @@
           <div class="feature-icon purple">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z" />
+                d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
             </svg>
           </div>
-          <h3 class="feature-title">4K 高清画质</h3>
+          <h3 class="feature-title">思维导图</h3>
           <p class="feature-description">
-            支持 4K / 1080p / 720p 多种清晰度选择，支持 MP3 音频提取，满足不同需求
+            自动提炼关键概念生成思维导图，支持 SVG/PNG 导出和全屏浏览
           </p>
         </div>
 
@@ -56,16 +56,16 @@
           <div class="feature-icon green">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" />
             </svg>
           </div>
-          <h3 class="feature-title">永久免费</h3>
+          <h3 class="feature-title">AI 问答</h3>
           <p class="feature-description">
-            免费版永久可用，无需注册登录，无水印无广告，提供最纯净的下载体验
+            基于视频字幕内容的智能问答，想问什么直接问，AI 帮你找答案
           </p>
         </div>
 
-        <!-- Pro Feature 1 -->
+        <!-- Feature 5 -->
         <div class="feature-card pro-card">
           <div class="pro-badge">Pro</div>
           <div class="feature-icon pink">
@@ -74,24 +74,24 @@
                 d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" />
             </svg>
           </div>
-          <h3 class="feature-title">字幕翻译</h3>
+          <h3 class="feature-title">字幕提取与翻译</h3>
           <p class="feature-description">
-            自动识别视频字幕，支持中英日韩等多语言互译，一键生成双语字幕
+            自动获取视频字幕，支持 SRT/VTT/TXT 格式下载，多语言互译
           </p>
         </div>
 
-        <!-- Pro Feature 2 -->
+        <!-- Feature 6 -->
         <div class="feature-card pro-card">
           <div class="pro-badge">Pro</div>
           <div class="feature-icon orange">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5m8.25 3v6.75m0 0l-3-3m3 3l3-3M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" />
             </svg>
           </div>
-          <h3 class="feature-title">批量下载</h3>
+          <h3 class="feature-title">学习历史</h3>
           <p class="feature-description">
-            分P视频一键全选下载，多视频批量处理，合并导出，效率翻倍
+            自动保存每次 AI 分析结果，随时回顾已学视频的知识点
           </p>
         </div>
       </div>

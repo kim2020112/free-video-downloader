@@ -1,4 +1,4 @@
-# 开发指南
+# 开发指南 — VideoMind
 
 ## 环境要求
 
@@ -151,7 +151,7 @@ python main.py
 ## 目录说明
 
 ```
-free-video-downloader/
+videomind/
 ├── backend/                    # Python 后端
 │   ├── main.py                 # FastAPI 应用入口（含 CORS、静态文件服务）
 │   ├── requirements.txt        # Python 依赖清单

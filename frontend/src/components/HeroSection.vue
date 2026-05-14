@@ -9,12 +9,10 @@ const emit = defineEmits(['update:url'])
 
 const platforms = [
   { name: 'B站', color: '#00a1d6' },
+  { name: 'YouTube', color: '#ff0000' },
   { name: '抖音', color: '#fe2c55' },
   { name: '小红书', color: '#ff2442' },
-  { name: 'YouTube', color: '#ff0000' },
   { name: 'TikTok', color: '#00f2ea' },
-  { name: 'Instagram', color: '#e1306c' },
-  { name: 'Twitter', color: '#1da1f2' },
 ]
 </script>
 
@@ -23,11 +21,11 @@ const platforms = [
     <div class="hero-bg-glow"></div>
     <div class="hero-container">
       <h1 class="hero-title">
-        <span class="hero-brand">SaveAny</span> 视频下载器
+        <span class="hero-brand">VideoMind</span> AI 视频学习助手
       </h1>
 
       <p class="hero-subtitle">
-        粘贴链接，一键下载高清视频
+        粘贴视频链接，AI 自动总结、生成结构化笔记与思维导图
       </p>
 
       <!-- Input and Button -->
@@ -42,7 +40,7 @@ const platforms = [
             @input="emit('update:url', $event.target.value)"
             @change="emit('update:url', $event.target.value)"
             type="text"
-            placeholder="粘贴视频链接，支持 B站、抖音、小红书、YouTube 等平台"
+            placeholder="粘贴视频链接，支持 B站、YouTube、抖音、小红书、TikTok"
             class="hero-input"
             @keyup.enter="onParse"
           />
@@ -52,17 +50,17 @@ const platforms = [
           :disabled="!url || loading"
           class="hero-parse-button"
         >
-          {{ loading ? '解析中...' : '解析视频' }}
+          {{ loading ? '解析中...' : '开始学习' }}
         </button>
       </div>
 
       <!-- Trust badges -->
       <div class="trust-badges">
-        <span class="trust-badge">无需注册</span>
+        <span class="trust-badge">AI 智能总结</span>
         <span class="trust-dot"></span>
-        <span class="trust-badge">完全免费</span>
+        <span class="trust-badge">结构化笔记</span>
         <span class="trust-dot"></span>
-        <span class="trust-badge">支持 4K</span>
+        <span class="trust-badge">思维导图</span>
       </div>
 
       <!-- Platform Tags -->

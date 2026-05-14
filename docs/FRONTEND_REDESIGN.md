@@ -2,9 +2,9 @@
 
 ## 品牌
 
-- 产品名称：**SaveAny**
-- 定位：免费在线视频下载器
-- 目标用户：以国内用户为主（B站、抖音、小红书、快手等）
+- 产品名称：**VideoMind**
+- 定位：AI 视频学习助手
+- 目标用户：以国内用户为主（B站、YouTube、抖音、小红书、TikTok）
 
 ## 配色（深色主题）
 
@@ -64,21 +64,21 @@ FooterSection（品牌 + 链接 + 平台列表 + 版权）
 ### NavBar
 - 毛玻璃效果：`background: rgba(15,23,42,0.8)` + `backdrop-filter: blur(16px)`
 - sticky 定位，底部 1px 半透明边框
-- 左：SaveAny Logo（蓝青渐变方形图标 + 加粗文字，`Plus Jakarta Sans` 字体）
+- 左：VideoMind Logo（蓝青渐变方形图标 + 加粗文字，`Plus Jakarta Sans` 字体）
 - 中：导航链接，颜色 `var(--text-secondary)`，hover 变亮
 - 右：登录按钮（描边）+ 立即使用按钮（蓝青渐变实心）
 - 移动端：导航链接隐藏
 
 ### HeroSection
 - 深色背景 + 蓝色光晕（`radial-gradient`，`rgba(59,130,246,0.12)`）
-- 品牌名"SaveAny"使用蓝青渐变文字（`-webkit-background-clip: text`）
+- 品牌名"VideoMind"使用蓝青渐变文字（`-webkit-background-clip: text`）
 - 主标题：`3rem`，`Plus Jakarta Sans` 字体
 - 副标题：`1.125rem`，`var(--text-secondary)`
-- 输入框 + 下载按钮：横向排列，`max-width: 700px`，移动端改为纵向
+- 输入框 + 开始学习按钮：横向排列，`max-width: 700px`，移动端改为纵向
   - 输入框：半透明深色背景，左侧链接图标，focus 时蓝青边框
-  - 按钮：蓝青渐变，文案"免费下载"，hover 上浮
-- 信任标签：`无需注册 · 完全免费 · 支持 4K`，`var(--text-muted)`
-- 平台标签流：10 个胶囊标签，国内平台优先（B站、抖音、小红书、快手、微博、西瓜视频 → YouTube、TikTok、Instagram、Twitter），hover 时边框变为平台品牌色
+  - 按钮：蓝青渐变，文案"开始学习"，hover 上浮
+- 信任标签：`AI 智能总结 · 结构化笔记 · 思维导图`，`var(--text-muted)`
+- 平台标签流：5 个胶囊标签（B站、YouTube、抖音、小红书、TikTok），hover 时边框变为平台品牌色
 
 ### Results Section（App.vue 内联）
 - 仅在 `videoInfo` 或 `error` 存在时渲染

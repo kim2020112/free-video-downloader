@@ -26,6 +26,8 @@ const props = defineProps({
   subtitleInfo: Object,
   videoTitle: String,
   mindmapMarkdown: String,
+  notesMarkdown: String,
+  generationStage: String,
   onSummarize: Function,
   onFetchSubtitle: Function,
   onSendQuestion: Function,
@@ -37,6 +39,7 @@ const activeSubTab = ref('summary')
 const chatInput = ref('')
 
 const hasMindmap = computed(() => !!props.mindmapMarkdown)
+const hasNotes = computed(() => !!props.notesMarkdown)
 
 function handleStart() {
   props.onSummarize()
@@ -481,6 +484,28 @@ function downloadSubtitle() {
 const hasSubtitleSegments = computed(() =>
   props.subtitleInfo?.segments && props.subtitleInfo.segments.length > 0
 )
+
+const stageLabels = {
+  subtitle_loaded: '字幕加载完成',
+  mindmap: '思维导图已生成',
+  notes: '笔记已生成',
+}
+
+function copyNotes() {
+  if (!props.notesMarkdown) return
+  navigator.clipboard.writeText(props.notesMarkdown)
+}
+
+function downloadNotes() {
+  if (!props.notesMarkdown) return
+  const blob = new Blob([props.notesMarkdown], { type: 'text/markdown' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${props.videoTitle || 'notes'}.md`
+  a.click()
+  URL.revokeObjectURL(url)
+}
 </script>
 
 <template>
@@ -533,6 +558,14 @@ const hasSubtitleSegments = computed(() =>
         >
           思维导图
         </button>
+        <button
+          class="sub-tab-btn"
+          :class="{ active: activeSubTab === 'notes' }"
+          :disabled="!hasNotes && !loading"
+          @click="activeSubTab = 'notes'"
+        >
+          笔记
+        </button>
         <button class="sub-tab-btn" :class="{ active: activeSubTab === 'qa' }" @click="handleTabQA">
           问答
         </button>
@@ -550,7 +583,26 @@ const hasSubtitleSegments = computed(() =>
         <div v-else class="summary-section">
           <div class="summary-text prose prose-invert prose-sm max-w-none" v-html="renderMarkdown(streamingText || result.summary)"></div>
         </div>
-        <p v-if="loading && streamingText" class="streaming-indicator">AI 正在生成中...</p>
+        <div v-if="loading" class="progressive-stages">
+          <div class="stage-item" :class="{ done: streamingText }">
+            <span class="stage-dot"></span>
+            <span class="stage-label">摘要生成</span>
+            <span v-if="streamingText" class="stage-check">&#10003;</span>
+            <span v-else class="stage-spinner"></span>
+          </div>
+          <div class="stage-item" :class="{ done: notesMarkdown }">
+            <span class="stage-dot"></span>
+            <span class="stage-label">结构化笔记</span>
+            <span v-if="notesMarkdown" class="stage-check">&#10003;</span>
+            <span v-else-if="streamingText" class="stage-spinner"></span>
+          </div>
+          <div class="stage-item" :class="{ done: mindmapMarkdown }">
+            <span class="stage-dot"></span>
+            <span class="stage-label">思维导图</span>
+            <span v-if="mindmapMarkdown" class="stage-check">&#10003;</span>
+            <span v-else-if="notesMarkdown" class="stage-spinner"></span>
+          </div>
+        </div>
         <button v-if="!loading" @click="onSummarize" class="regenerate-btn">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="regenerate-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182" /></svg>
           重新生成
@@ -622,6 +674,29 @@ const hasSubtitleSegments = computed(() =>
           <p class="loading-text">正在生成思维导图...</p>
         </div>
         <div v-else class="mindmap-empty">请先生成总结以查看思维导图</div>
+      </div>
+
+      <!-- Tab: Markdown 笔记 -->
+      <div v-show="activeSubTab === 'notes'" class="sub-tab-panel">
+        <div v-if="!notesMarkdown && loading" class="notes-loading">
+          <div class="skeleton-line skeleton-long"></div>
+          <div class="skeleton-line skeleton-medium"></div>
+          <p class="loading-text">正在生成结构化笔记...</p>
+        </div>
+        <div v-else-if="notesMarkdown" class="notes-section">
+          <div class="notes-toolbar">
+            <button @click="copyNotes" class="notes-action-btn">
+              <svg viewBox="0 0 20 20" fill="currentColor" class="toolbar-icon"><path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z"/><path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z"/></svg>
+              复制
+            </button>
+            <button @click="downloadNotes" class="notes-action-btn">
+              <svg viewBox="0 0 20 20" fill="currentColor" class="toolbar-icon"><path d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z"/><path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"/></svg>
+              下载 .md
+            </button>
+          </div>
+          <div class="notes-content prose prose-invert prose-sm max-w-none" v-html="renderMarkdown(notesMarkdown)"></div>
+        </div>
+        <div v-else class="notes-empty">笔记将在总结完成后自动生成</div>
       </div>
 
       <!-- Tab: 问答 -->
@@ -863,8 +938,80 @@ const hasSubtitleSegments = computed(() =>
 .regenerate-btn:hover { background: var(--bg-card-hover); border-color: var(--border-hover); color: var(--text-primary); }
 .regenerate-icon { width: 16px; height: 16px; }
 
+/* 渐进式阶段指示器 */
+.progressive-stages {
+  display: flex; flex-direction: column; gap: 0.5rem;
+  margin-top: 1rem; padding: 0.75rem 1rem;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.stage-item {
+  display: flex; align-items: center; gap: 0.5rem;
+  font-size: 0.8125rem; color: var(--text-muted);
+  transition: color 0.2s;
+}
+.stage-item.done { color: var(--text-secondary); }
+.stage-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+  background: rgba(255,255,255,0.1);
+}
+.stage-item.done .stage-dot { background: var(--success); }
+.stage-label { flex: 1; }
+.stage-check { color: var(--success); font-size: 0.75rem; }
+.stage-spinner {
+  width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.1);
+  border-top-color: var(--accent-blue); border-radius: 50%;
+  animation: stage-spin 0.8s linear infinite;
+}
+@keyframes stage-spin { to { transform: rotate(360deg); } }
+
+/* 笔记 */
+.notes-section { display: flex; flex-direction: column; gap: 0.75rem; }
+.notes-toolbar { display: flex; gap: 0.5rem; justify-content: flex-end; }
+.notes-action-btn {
+  display: inline-flex; align-items: center; gap: 0.375rem;
+  padding: 0.375rem 0.75rem;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 0.8125rem; cursor: pointer;
+  transition: all 0.15s;
+}
+.notes-action-btn:hover { background: rgba(255,255,255,0.1); color: var(--text-primary); }
+.notes-content {
+  max-height: 600px; overflow-y: auto;
+  padding: 1.25rem;
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.6) 0%, rgba(30, 41, 59, 0.3) 100%);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  line-height: 1.8;
+}
+.notes-content :deep(h1) { font-size: 1.25rem; font-weight: 700; color: var(--text-primary); margin: 1rem 0 0.5rem; padding-bottom: 0.375rem; border-bottom: 1px solid var(--border); }
+.notes-content :deep(h2) { font-size: 1.1rem; font-weight: 600; color: #E2E8F0; margin: 0.875rem 0 0.5rem; }
+.notes-content :deep(h3) { font-size: 1rem; font-weight: 600; color: #CBD5E1; margin: 0.75rem 0 0.375rem; }
+.notes-content :deep(p) { margin: 0.5rem 0; }
+.notes-content :deep(ul), .notes-content :deep(ol) { margin: 0.5rem 0; padding-inline-start: 1.5rem; }
+.notes-content :deep(li) { margin: 0.25rem 0; }
+.notes-content :deep(pre) { background: rgba(0,0,0,0.4); padding: 0.75rem 1rem; border-radius: 6px; overflow-x: auto; margin: 0.75rem 0; }
+.notes-content :deep(code) { font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 0.8125rem; }
+.notes-content :deep(blockquote) {
+  border-left: 3px solid var(--accent-blue);
+  padding: 0.375rem 0.75rem; margin: 0.5rem 0;
+  background: rgba(59, 130, 246, 0.08);
+  border-radius: 0 6px 6px 0;
+  color: #93C5FD;
+}
+.notes-content :deep(strong) { color: #F8FAFC; font-weight: 600; }
+.notes-content :deep(a) { color: var(--accent-blue); }
+.notes-content :deep(hr) { border-color: var(--border); margin: 1rem 0; }
+.notes-loading { display: flex; flex-direction: column; align-items: center; gap: 0.75rem; padding: 2rem; }
+.notes-empty { padding: 2rem; text-align: center; color: var(--text-muted); }
+
 @media (max-width: 768px) {
   .mindmap-container { padding: 0.5rem; }
   .chat-container { height: 300px; }
+  .notes-content { max-height: 400px; padding: 1rem; }
 }
 </style>

@@ -1,4 +1,4 @@
-# 方案设计文档
+# 方案设计文档 — VideoMind
 
 ## 1. 技术选型
 
@@ -7,7 +7,7 @@
 | 前端框架 | Vue 3 + Vite | 轻量、快速、生态成熟 |
 | CSS 框架 | Tailwind CSS 4 | 原子化 CSS，快速构建 UI |
 | 后端框架 | FastAPI (Python) | 异步支持好、自动生成 API 文档、WebSocket 原生支持 |
-| 视频引擎 | yt-dlp | GitHub 19w+ Star，支持 1800+ 平台，Python 库直接调用 |
+| 视频引擎 | yt-dlp | GitHub 19w+ Star，支持主流视频平台，Python 库直接调用 |
 | AI 总结 | anthropic SDK + DeepSeek | 通过 Anthropic 兼容端点调用，支持流式 MessageStream（thinking + text 双轨） |
 | Markdown 渲染 | marked + DOMPurify | 轻量无依赖，XSS 防护，AI 输出结构化展示 |
 | 思维导图 | markmap-lib + markmap-view | 将 Markdown 列表渲染为交互式思维导图 |
@@ -339,7 +339,7 @@ bilibili.com → 自动补全为 www.bilibili.com（无 www 时 yt-dlp 返回 40
 ## 8. 目录结构
 
 ```
-free-video-downloader/
+videomind/
 ├── backend/
 │   ├── main.py                 # FastAPI 入口
 │   ├── requirements.txt        # Python 依赖

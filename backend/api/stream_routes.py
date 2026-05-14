@@ -17,6 +17,7 @@ from core.summarizer import (
     extract_bilibili_subtitle,
     generate_mindmap_markdown,
 )
+from core.ai_client import generate_notes
 
 from api.routes import extract_url, _download_subtitle_content, downloader
 from api.summary_routes import (
@@ -123,6 +124,12 @@ async def summarize_stream(req: SummarizeRequest):
                     yield ("mindmap", {"markdown": mindmap_md})
                 except Exception as e:
                     yield ("warn", {"message": f"思维导图生成失败: {str(e)}"})
+
+                try:
+                    notes_md = generate_notes(subtitle_text, info.title)
+                    yield ("notes", {"markdown": notes_md})
+                except Exception as e:
+                    yield ("warn", {"message": f"笔记生成失败: {str(e)}"})
 
             yield ("done", {})
 

@@ -1,35 +1,59 @@
-# 万能视频下载器
+# VideoMind — AI 视频学习助手
 
-基于 yt-dlp 的万能视频下载网站，支持 1800+ 平台视频解析与下载。
+将任何视频转化为结构化知识：AI 总结、学习笔记、思维导图、智能问答。
+
+## 核心功能
+
+- **AI 智能总结**：自动提取字幕，大模型生成精炼摘要，快速把握核心内容
+- **结构化笔记**：自动生成标题层级分明的 Markdown 笔记，支持代码块与重点高亮
+- **思维导图**：提炼关键概念生成可视化导图，支持 SVG/PNG 导出
+- **AI 问答**：基于视频字幕内容自由提问，AI 帮你找到答案
+- **字幕提取**：支持 SRT/VTT/TXT 格式下载，多语言翻译
+- **学习历史**：自动保存每次分析结果，随时回顾已学内容
+- **视频下载**：保留原下载功能，支持多清晰度选择
+
+## 支持平台
+
+B站 · YouTube · 抖音 · 小红书 · TikTok
 
 ## 技术栈
 
-- **前端**：Vue 3 + Vite + Tailwind CSS
-- **后端**：FastAPI + yt-dlp (Python)
-- **视频引擎**：yt-dlp (GitHub 19w+ Star)
+| 层 | 技术 |
+|---|------|
+| 前端 | Vue 3 + Vite + Tailwind CSS |
+| 后端 | FastAPI + Python |
+| AI | DeepSeek API（OpenAI 兼容协议，可切换） |
+| 存储 | SQLite + ChromaDB |
+| 视频引擎 | yt-dlp |
 
 ## 快速开始
 
 ### 环境要求
 
-- Python >= 3.9（已在 Python 3.14 验证）
+- Python >= 3.9
 - Node.js >= 18
-- FFmpeg（已加入 PATH）
+- FFmpeg
 
-### 安装依赖
+### 安装
 
 ```bash
 cd backend && pip install -r requirements.txt
 cd frontend && npm install
 ```
 
+### 配置
+
+编辑 `backend/.env`：
+
+```env
+AI_API_KEY=your_api_key
+AI_BASE_URL=https://api.deepseek.com/anthropic
+AI_MODEL=deepseek-v4-flash
+```
+
 ### 启动
 
 ```bash
-# 方式一：一键启动（Windows）
-start.bat
-
-# 方式二：手动启动
 cd backend && python -m uvicorn main:app --reload --port 8000
 cd frontend && npm run dev
 ```
@@ -38,30 +62,35 @@ cd frontend && npm run dev
 
 | 服务 | 地址 |
 |------|------|
-| 前端页面 | http://localhost:5173 |
-| 后端 API | http://localhost:8000 |
+| 前端 | http://localhost:5173 |
 | API 文档 | http://localhost:8000/docs |
 
-## 功能
+## 架构
 
-- 粘贴视频链接，自动解析视频信息（标题、时长、封面、格式列表）
-- 支持多清晰度选择（360p/720p/1080p/4K）
-- 实时下载进度推送（WebSocket）
-- 支持 1800+ 视频平台（YouTube、B站、TikTok、Instagram 等）
+```
+用户输入 URL → 字幕获取 → AI 处理流水线 → 知识存储
+                 │              │               │
+          B站CC/yt-dlp    摘要/笔记/导图     SQLite + ChromaDB
+                              │
+                         流式 SSE 推送（渐进式生成）
+```
 
-## 项目文档
+## API 端点
 
-详细文档见 [docs/](docs/) 目录：
-
-| 文档 | 说明 |
+| 端点 | 说明 |
 |------|------|
-| [需求分析](docs/requirements.md) | 项目背景、目标用户、核心需求 |
-| [方案设计](docs/architecture.md) | 技术架构、API 设计、核心流程 |
-| [开发指南](docs/development.md) | 环境搭建、启动方式、目录说明 |
-| [变更记录](docs/changelog.md) | 版本迭代历史 |
+| `POST /api/parse` | 解析视频信息 |
+| `POST /api/summarize/stream` | AI 总结（SSE 流式） |
+| `GET /api/subtitle/text` | 获取字幕文本 |
+| `POST /api/chat/stream` | AI 问答（SSE 流式） |
+| `GET /api/videos` | 学习历史列表 |
+| `POST /api/ingest` | 保存学习记录 |
+
+## 服务器配置
+
+推荐 4C4G，50G 存储，适合个人使用。
 
 ## 注意事项
 
 - 基于 yt-dlp 开源项目，仅供学习使用
-- 请尊重版权，仅下载有权访问的内容
-- 大量下载可能触发平台限速，请合理使用
+- 请尊重版权，仅处理有权访问的内容

@@ -9,19 +9,19 @@
                 <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-8 12H9.5v-2H11v-2H9.5V9H11V7H9.5v2H8V7H6.5v2H5v2h1.5v2H5v2h1.5v2H8v-2h1.5v2H11v-2zm2.5 2H12v-2h1.5v2zm0-4H12v-2h1.5v2zm0-4H12V7h1.5v2zm4 8H16v-2h1.5v2zm0-4H16v-2h1.5v2zm0-4H16V7h1.5v2z"/>
               </svg>
             </div>
-            <span class="footer-logo-text">SaveAny</span>
+            <span class="footer-logo-text">VideoMind</span>
           </div>
           <p class="footer-desc">
-            免费在线视频下载器，支持国内外 1000+ 平台，一键保存高清视频。
+            AI 视频学习助手 — 将视频转化为结构化知识，支持 B站、YouTube、抖音、小红书、TikTok。
           </p>
         </div>
 
         <div class="footer-links">
           <div class="footer-link-group">
-            <h4 class="footer-link-title">产品</h4>
-            <a href="#features" class="footer-link">功能特性</a>
-            <a href="#pricing" class="footer-link">定价方案</a>
-            <a href="#tools" class="footer-link">工具箱</a>
+            <h4 class="footer-link-title">功能</h4>
+            <a href="#features" class="footer-link">AI 总结</a>
+            <a href="#features" class="footer-link">学习笔记</a>
+            <a href="#features" class="footer-link">思维导图</a>
           </div>
           <div class="footer-link-group">
             <h4 class="footer-link-title">支持</h4>
@@ -39,11 +39,11 @@
 
       <div class="footer-platforms">
         <span class="footer-platforms-label">支持平台：</span>
-        <span class="footer-platforms-list">B站 · 抖音 · 小红书 · 快手 · 微博 · 西瓜视频 · 微信视频号 · YouTube · TikTok · Instagram · Twitter</span>
+        <span class="footer-platforms-list">B站 · YouTube · 抖音 · 小红书 · TikTok</span>
       </div>
 
       <div class="footer-bottom">
-        <span class="footer-copyright">&copy; 2026 SaveAny. All rights reserved.</span>
+        <span class="footer-copyright">&copy; 2026 VideoMind. All rights reserved.</span>
       </div>
     </div>
   </footer>

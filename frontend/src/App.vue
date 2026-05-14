@@ -31,9 +31,33 @@ const error = ref('')
 const loading = ref(false)
 const selectedPartIndices = ref([])
 const translateTargetLang = ref('zh-Hans')
-const activeTab = ref('info')
+const activeTab = ref('summary')
+const showDownloadSection = ref(false)
 const showSubtitles = ref(false)
 const showFullDescription = ref(false)
+const showHistory = ref(false)
+const historyList = ref([])
+
+async function fetchHistory() {
+  try {
+    const res = await fetch('/api/videos?limit=20')
+    if (res.ok) {
+      const data = await res.json()
+      historyList.value = data.videos || []
+    }
+  } catch {}
+}
+
+function toggleHistory() {
+  showHistory.value = !showHistory.value
+  if (showHistory.value) fetchHistory()
+}
+
+function selectHistory(item) {
+  url.value = item.url
+  showHistory.value = false
+  handleParse()
+}
 
 const {
   summaryResult,
@@ -45,6 +69,8 @@ const {
   subtitleError,
   subtitleInfo,
   mindmapMarkdown,
+  notesMarkdown,
+  generationStage,
   fetchSubtitleText,
   summarizeVideoStream,
   summarizeVideo,
@@ -220,7 +246,8 @@ async function handleParse() {
   error.value = ''
   loading.value = true
   selectedPartIndices.value = []
-  activeTab.value = 'info'
+  activeTab.value = 'summary'
+  showDownloadSection.value = false
   resetSummary()
   resetChat()
   reset()
@@ -228,6 +255,12 @@ async function handleParse() {
   showFullDescription.value = false
   try {
     await parseVideo(url.value.trim())
+    // 静默入库（fire-and-forget）
+    fetch('/api/ingest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: url.value.trim() }),
+    }).catch(() => {})
   } catch (e) {
     error.value = e.message || '解析失败，请检查链接是否有效'
   } finally {
@@ -322,7 +355,30 @@ function formatTime(timestamp) {
 
 <template>
   <div class="app-container">
-    <NavBar />
+    <NavBar @toggle-history="toggleHistory" />
+
+    <!-- 历史抽屉 -->
+    <transition name="drawer">
+      <div v-if="showHistory" class="history-drawer-overlay" @click="showHistory = false">
+        <div class="history-drawer" @click.stop>
+          <div class="drawer-header">
+            <h3 class="drawer-title">历史记录</h3>
+            <button class="drawer-close" @click="showHistory = false">&times;</button>
+          </div>
+          <div class="drawer-body">
+            <div v-if="!historyList.length" class="drawer-empty">暂无历史记录</div>
+            <div v-for="item in historyList" :key="item.id" class="drawer-item" @click="selectHistory(item)">
+              <img v-if="item.thumbnail_url" :src="item.thumbnail_url" class="drawer-thumb" />
+              <div class="drawer-item-info">
+                <span class="drawer-item-title">{{ item.title }}</span>
+                <span class="drawer-item-time">{{ item.platform }} · {{ item.created_at?.slice(0, 10) }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </transition>
+
     <HeroSection
       v-model:url="url"
       :loading="loading"
@@ -378,18 +434,32 @@ function formatTime(timestamp) {
 
           <!-- Tab 栏 -->
           <div class="tab-bar">
-            <button class="tab-button" :class="{ active: activeTab === 'info' }" @click="activeTab = 'info'">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="tab-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 11l5 5m0 0l5-5m-5 5V3" /></svg>
-              下载
-            </button>
             <button class="tab-button" :class="{ active: activeTab === 'summary' }" @click="activeTab = 'summary'">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="tab-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" /></svg>
               AI 总结
             </button>
+            <button class="tab-button" :class="{ active: activeTab === 'download' }" @click="activeTab = 'download'; showDownloadSection = true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="tab-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 11l5 5m0 0l5-5m-5 5V3" /></svg>
+              下载
+            </button>
           </div>
 
-          <!-- Tab: 下载区 -->
-          <div v-show="activeTab === 'info'">
+          <!-- Tab: 下载区（折叠式） -->
+          <div v-show="activeTab === 'download'">
+          <!-- 下载选项折叠栏 -->
+          <button
+            v-if="displayFormats.length"
+            class="download-collapse-toggle"
+            :aria-expanded="showDownloadSection"
+            @click="showDownloadSection = !showDownloadSection"
+          >
+            <svg class="subtitle-toggle-chevron" :class="{ rotated: showDownloadSection }" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
+            </svg>
+            <span>下载选项</span>
+            <span class="download-collapse-desc">{{ selectedFormatDetail ? stripSizeFromLabel(selectedFormatDetail.label) || (selectedFormatDetail.height ? selectedFormatDetail.height + 'p' : '') : '选择格式下载视频' }}</span>
+          </button>
+          <div v-show="showDownloadSection || !displayFormats.length">
           <!-- 分P选择器 -->
           <div v-if="videoInfo.parts && videoInfo.parts.length" class="parts-section">
             <div class="parts-header">
@@ -542,19 +612,20 @@ function formatTime(timestamp) {
             </div>
           </div>
 
-          <!-- Download Button -->
-          <button
-            v-if="displayFormats.length"
-            @click="handleDownload"
-            :disabled="progress && progress.status === 'downloading'"
-            class="download-button"
-          >
-            <svg class="download-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-            </svg>
-            {{ progress && progress.status === 'downloading' ? '下载中...' : '开始下载' }}
-          </button>
+          <!-- Download Button (small secondary) -->
+          <div v-if="displayFormats.length" style="display:flex;justify-content:flex-end;">
+            <button
+              @click="handleDownload"
+              :disabled="progress && progress.status === 'downloading'"
+              class="download-btn-small"
+            >
+              <svg class="download-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+              {{ progress && progress.status === 'downloading' ? '下载中...' : '下载视频' }}
+            </button>
+          </div>
 
           <!-- Download Progress -->
           <div v-if="progress" class="progress-card" :class="'progress-' + progress.status">
@@ -574,7 +645,8 @@ function formatTime(timestamp) {
             </div>
             <div v-if="progress.error" class="progress-error">{{ progress.error }}</div>
           </div>
-          </div>
+          </div><!-- end v-show showDownloadSection -->
+          </div><!-- end v-show activeTab === 'download' -->
 
           <!-- Tab: AI 总结 -->
           <div v-show="activeTab === 'summary'">
@@ -592,6 +664,8 @@ function formatTime(timestamp) {
               :subtitleInfo="subtitleInfo"
               :videoTitle="videoInfo?.title || ''"
               :mindmapMarkdown="mindmapMarkdown"
+              :notesMarkdown="notesMarkdown"
+              :generationStage="generationStage"
               :onSummarize="handleSummarize"
               :onFetchSubtitle="handleFetchSubtitle"
               :onSendQuestion="handleSendQuestion"
@@ -1597,4 +1671,104 @@ function formatTime(timestamp) {
   .history-item-content { width: calc(100% - 42px); }
   .save-button { width: 100%; margin-top: 0.25rem; }
 }
+
+/* 历史抽屉 */
+.history-drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 200;
+  display: flex;
+  justify-content: flex-end;
+}
+.history-drawer {
+  width: 340px;
+  max-width: 90vw;
+  height: 100%;
+  background: var(--bg-card);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+}
+.drawer-title { font-size: 1rem; font-weight: 600; color: var(--text-primary); margin: 0; }
+.drawer-close { background: none; border: none; font-size: 1.5rem; color: var(--text-muted); cursor: pointer; line-height: 1; }
+.drawer-body { flex: 1; overflow-y: auto; padding: 0.75rem; }
+.drawer-empty { padding: 2rem; text-align: center; color: var(--text-muted); font-size: 0.875rem; }
+.drawer-item {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.drawer-item:hover { background: rgba(255, 255, 255, 0.05); }
+.drawer-thumb { width: 64px; height: 40px; object-fit: cover; border-radius: 4px; flex-shrink: 0; }
+.drawer-item-info { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
+.drawer-item-title { font-size: 0.8125rem; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.drawer-item-time { font-size: 0.75rem; color: var(--text-muted); }
+
+.drawer-enter-active, .drawer-leave-active { transition: opacity 0.2s; }
+.drawer-enter-active .history-drawer, .drawer-leave-active .history-drawer { transition: transform 0.2s; }
+.drawer-enter-from, .drawer-leave-to { opacity: 0; }
+.drawer-enter-from .history-drawer, .drawer-leave-to .history-drawer { transform: translateX(100%); }
+
+/* 下载折叠栏 */
+.download-collapse-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.625rem 0.875rem;
+  margin-bottom: 0.75rem;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: left;
+}
+.download-collapse-toggle:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--border-hover);
+  color: var(--text-primary);
+}
+.download-collapse-desc {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.download-btn-small {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.5rem 1rem;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.download-btn-small:hover:not(:disabled) {
+  background: rgba(59, 130, 246, 0.1);
+  border-color: rgba(59, 130, 246, 0.3);
+  color: #93C5FD;
+}
+.download-btn-small:disabled { opacity: 0.4; cursor: not-allowed; }
 </style>

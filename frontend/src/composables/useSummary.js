@@ -12,6 +12,8 @@ export function useSummary() {
   const subtitleError = ref('')
   const subtitleInfo = ref(null)
   const mindmapMarkdown = ref('')
+  const notesMarkdown = ref('')
+  const generationStage = ref('')
 
   async function fetchSubtitleText(url, lang) {
     isFetchingSubtitle.value = true
@@ -86,10 +88,15 @@ export function useSummary() {
                 summaryResult.value = event.data
                 break
               case 'progress':
-                // 字幕加载完成等进度事件
+                generationStage.value = event.data.stage || event.data.message || ''
                 break
               case 'mindmap':
                 mindmapMarkdown.value = event.data.markdown
+                generationStage.value = 'mindmap'
+                break
+              case 'notes':
+                notesMarkdown.value = event.data.markdown
+                generationStage.value = 'notes'
                 break
               case 'warn':
                 summarizeError.value = event.data.message
@@ -122,6 +129,8 @@ export function useSummary() {
     subtitleText.value = ''
     subtitleInfo.value = null
     mindmapMarkdown.value = ''
+    notesMarkdown.value = ''
+    generationStage.value = ''
     isFetchingSubtitle.value = false
     subtitleError.value = ''
   }
@@ -136,6 +145,8 @@ export function useSummary() {
     subtitleError,
     subtitleInfo,
     mindmapMarkdown,
+    notesMarkdown,
+    generationStage,
     fetchSubtitleText,
     summarizeVideoStream,
     summarizeVideo,

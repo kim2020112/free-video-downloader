@@ -1,5 +1,50 @@
 # 变更记录
 
+## [2.3.0] - 2026-05-14
+
+### 新增
+
+- **结构化学习笔记**（`api/stream_routes.py` + `frontend/src/components/AiSummary.vue`）：
+  - AI 流水线新增 `notes` 阶段，生成标题层级分明的 Markdown 学习笔记
+  - 前端 `AiSummary.vue` 新增"学习笔记"标签页（位于思维导图与问答之间）
+  - 笔记面板支持一键复制和 Markdown 文件下载
+  - SSE 新增 `notes` 事件类型，推送笔记 Markdown 内容
+
+- **渐进式生成 UI**（`frontend/src/components/AiSummary.vue`）：
+  - 新增三阶段进度指示器：字幕加载 → AI 总结 → 笔记生成 → 思维导图
+  - 每阶段独立显示完成/进行中状态，用户可实时了解 AI 处理进度
+  - SSE `progress` 事件驱动阶段状态更新
+
+### 变更
+
+- **产品定位转型**：从"视频下载工具"升级为"AI 视频学习助手"
+  - 品牌名：SaveAny → **VideoMind**
+  - 项目定位：免费在线视频下载器 → AI 视频学习助手
+  - 目标平台：聚焦 5 个核心平台（B站、YouTube、抖音、小红书、TikTok）
+
+- **前端 UI 重构（增量式）**：
+  - `HeroSection.vue`：标题/副标题/按钮文案全面更新，平台标签精简为 5 个
+  - `NavBar.vue`：Logo 文字更新为 VideoMind
+  - `FeaturesSection.vue`：6 张特性卡片全部围绕 AI 学习场景重写
+  - `FooterSection.vue`：平台列表精简，品牌/文案更新
+  - `App.vue`：默认标签页改为 AI 总结，下载功能弱化为折叠区域+次要按钮
+
+- **下载功能弱化**：
+  - 下载标签页从第一位移至第二位
+  - 下载区域改为可折叠（默认收起）
+  - 下载按钮缩小，不再占据视觉焦点
+
+### 文档更新
+
+- `README.md`：全面重写，突出 AI 学习定位，更新架构图和 API 端点
+- `docs/requirements.md`：重写需求分析，V2.0 AI 功能补充完整
+- `docs/architecture.md`：更新产品名称和平台描述
+- `docs/development.md`：更新项目名称为 VideoMind
+- `docs/FRONTEND_REDESIGN.md`：更新品牌名、定位和平台描述
+- 所有文档中的 "SaveAny" / "万能下载器" / "1800+ 平台" 替换为 VideoMind / AI 视频学习助手 / 5 平台
+
+---
+
 ## [2.2.1] - 2026-05-12
 
 ### 修复
