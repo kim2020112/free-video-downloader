@@ -36,7 +36,7 @@ def _fetch_bilibili_parts(url: str) -> list[VideoPart]:
         pages = data['data']
         if len(pages) <= 1:
             return []
-        return [VideoPart(index=p['page'], title=p['part'], duration=p.get('duration')) for p in pages]
+        return [VideoPart(index=p['page'], title=p['part'], cid=p.get('cid'), duration=p.get('duration')) for p in pages]
     except Exception:
         return []
 

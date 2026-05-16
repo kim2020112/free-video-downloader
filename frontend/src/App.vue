@@ -32,6 +32,19 @@ const loading = ref(false)
 const selectedPartIndices = ref([])
 const translateTargetLang = ref('zh-Hans')
 const activeTab = ref('summary')
+const currentSummarizePart = ref(1)
+
+// 多P视频：当前总结的分P URL（保留 ?p=N）
+const summarizeUrl = computed(() => {
+  if (!videoInfo.value?.parts || videoInfo.value.parts.length <= 1) {
+    return videoInfo.value?.webpage_url || url.value
+  }
+  const bvMatch = (videoInfo.value.webpage_url || '').match(/(BV\w+)/)
+  if (!bvMatch) return videoInfo.value?.webpage_url || url.value
+  const p = currentSummarizePart.value
+  if (p <= 1) return `https://www.bilibili.com/video/${bvMatch[1]}`
+  return `https://www.bilibili.com/video/${bvMatch[1]}?p=${p}`
+})
 const showDownloadSection = ref(false)
 const showSubtitles = ref(false)
 const showFullDescription = ref(false)
@@ -110,43 +123,50 @@ const {
 async function handleSummarize(force = false) {
   if (!videoInfo.value) return
   try {
-    await summarizeVideoStream(videoInfo.value.webpage_url, null, force, 'full')
+    await summarizeVideoStream(summarizeUrl.value, null, force, 'full')
   } catch (e) { /* handled by useSummary */ }
 }
 
 async function handleRegenerateSummary() {
   if (!videoInfo.value) return
   try {
-    await summarizeVideoStream(videoInfo.value.webpage_url, null, true, 'summary')
+    await summarizeVideoStream(summarizeUrl.value, null, true, 'summary')
   } catch (e) { /* handled by useSummary */ }
 }
 
 async function handleRegenerateMindmap() {
   if (!videoInfo.value) return
   try {
-    await summarizeVideoStream(videoInfo.value.webpage_url, null, true, 'mindmap')
+    await summarizeVideoStream(summarizeUrl.value, null, true, 'mindmap')
   } catch (e) { /* handled by useSummary */ }
 }
 
 async function handleRegenerateNotes() {
   if (!videoInfo.value) return
   try {
-    await summarizeVideoStream(videoInfo.value.webpage_url, null, true, 'notes')
+    await summarizeVideoStream(summarizeUrl.value, null, true, 'notes')
   } catch (e) { /* handled by useSummary */ }
 }
 
 async function handleRegenerateSubtitle() {
   if (!videoInfo.value) return
   try {
-    await summarizeVideoStream(videoInfo.value.webpage_url, null, true, 'subtitle')
+    await summarizeVideoStream(summarizeUrl.value, null, true, 'subtitle')
   } catch (e) { /* handled by useSummary */ }
 }
 
 async function handleFetchSubtitle() {
   if (!videoInfo.value) return
   try {
-    await fetchSubtitleText(videoInfo.value.webpage_url)
+    await fetchSubtitleText(summarizeUrl.value)
   } catch (e) { /* handled by useSummary */ }
+}
+
+async function switchSummarizePart(partIndex) {
+  if (partIndex === currentSummarizePart.value) return
+  currentSummarizePart.value = partIndex
+  activeTab.value = 'summary'
+  await handleSummarize(false)
 }
 
 function handleSendQuestion(question) {
@@ -297,6 +317,7 @@ async function handleParse() {
   loading.value = true
   selectedPartIndices.value = []
   activeTab.value = 'summary'
+  currentSummarizePart.value = 1
   showDownloadSection.value = false
   resetSummary()
   resetChat()
@@ -758,6 +779,8 @@ function formatTime(timestamp) {
               :notesSections="notesSections"
               :flashcards="flashcards"
               :generationStage="generationStage"
+              :multiParts="videoInfo?.parts?.length > 1 ? videoInfo.parts : []"
+              :currentSummarizePart="currentSummarizePart"
               :onSummarize="handleSummarize"
               :onRegenerateSummary="handleRegenerateSummary"
               :onRegenerateMindmap="handleRegenerateMindmap"
@@ -765,6 +788,7 @@ function formatTime(timestamp) {
               :onRegenerateSubtitle="handleRegenerateSubtitle"
               :onFetchSubtitle="handleFetchSubtitle"
               :onSendQuestion="handleSendQuestion"
+              :onSwitchPart="switchSummarizePart"
             />
           </div>
         </div>
@@ -1841,16 +1865,37 @@ function formatTime(timestamp) {
 }
 
 @media (max-width: 768px) {
-  .results-section { padding: 2rem 1rem; }
-  .video-card { padding: 1.5rem; }
-  .video-info { flex-direction: column; }
+  .results-section { padding: 1.5rem 0.75rem; }
+  .results-container { gap: 1rem; }
+  .video-card { padding: 1rem; border-radius: 12px; }
+  .video-info { flex-direction: column; gap: 0.75rem; }
   .video-thumbnail-wrapper { width: 100%; }
   .video-thumbnail { width: 100%; height: auto; }
   .video-thumbnail-play { opacity: 1; }
+  .video-title { font-size: 0.9375rem; }
+  .video-meta-row { flex-wrap: wrap; gap: 0.375rem; }
+  .video-meta-item { font-size: 0.6875rem; }
+  .video-original-link { font-size: 0.75rem; }
+
+  /* 下载区域 */
   .format-grid { grid-template-columns: 1fr; }
+  .format-button { padding: 0.625rem 0.75rem; }
+  .parts-section { font-size: 0.8125rem; }
+  .part-row { padding: 0.5rem; }
+  .part-title { font-size: 0.8125rem; }
+
+  /* Tab 栏 */
+  .tab-bar { gap: 0.125rem; }
+  .tab-button { padding: 0.5rem 0.625rem; font-size: 0.8125rem; gap: 0.25rem; }
+  .tab-icon { width: 14px; height: 14px; }
+
+  /* 历史 */
   .history-item { flex-wrap: wrap; }
   .history-item-content { width: calc(100% - 42px); }
   .save-button { width: 100%; margin-top: 0.25rem; }
+
+  /* 描述 */
+  .description-text { font-size: 0.8125rem; }
 }
 
 /* 历史抽屉 */
@@ -1858,6 +1903,8 @@ function formatTime(timestamp) {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
   z-index: 200;
   display: flex;
   justify-content: flex-end;
@@ -1868,6 +1915,7 @@ function formatTime(timestamp) {
   height: 100%;
   background: var(--bg-card);
   border-left: 1px solid var(--border);
+  box-shadow: -8px 0 30px rgba(0, 0, 0, 0.35);
   display: flex;
   flex-direction: column;
   overflow: hidden;

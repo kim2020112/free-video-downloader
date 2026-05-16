@@ -112,43 +112,32 @@ def summarize_from_description(title: str, description: str) -> dict:
 
 # ──── B 站 CC 字幕提取 ────
 
-def extract_bilibili_subtitle(url: str) -> dict | None:
-    """B 站专用：通过 dm/view API 获取 CC 字幕（人工字幕 > 自动字幕）。
+def extract_bilibili_subtitle_by_cid(bvid: str, cid: int, aid: int = None) -> dict | None:
+    """获取B站指定分P的CC字幕（人工字幕 > 自动字幕）。
 
-    返回:
-        {
-            "has_subtitle": bool,
-            "language": str,
-            "subtitle_type": "manual" | "auto",
-            "segments": [{"start": float, "end": float, "text": str}, ...],
-            "full_text": str,
-            "text": str,
-        }
-        无字幕时返回 None
+    Args:
+        bvid: 视频 BV 号
+        cid: 分P的 cid
+        aid: 视频 aid（可选，未提供时自动获取）
+
+    返回格式同 extract_bilibili_subtitle。
     """
-    m = re.search(r'(BV[a-zA-Z0-9]+)', url)
-    if not m:
-        return None
-    bvid = m.group(1)
-
     try:
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Referer': f'https://www.bilibili.com/video/{bvid}',
         }
 
-        # 1. 获取 aid + cid
-        view_req = urllib.request.Request(
-            f'https://api.bilibili.com/x/web-interface/view?bvid={bvid}',
-            headers=headers,
-        )
-        view_data = json.loads(urllib.request.urlopen(view_req, timeout=15).read())
-        cid = view_data.get('data', {}).get('cid')
-        aid = view_data.get('data', {}).get('aid')
-        if not cid or not aid:
-            return None
+        if not aid:
+            view_req = urllib.request.Request(
+                f'https://api.bilibili.com/x/web-interface/view?bvid={bvid}',
+                headers=headers,
+            )
+            view_data = json.loads(urllib.request.urlopen(view_req, timeout=15).read())
+            aid = view_data.get('data', {}).get('aid')
+            if not aid:
+                return None
 
-        # 2. 通过 dm/view API 获取字幕列表（type=1 返回字幕信息）
         dm_req = urllib.request.Request(
             f'https://api.bilibili.com/x/v2/dm/view?aid={aid}&oid={cid}&type=1',
             headers=headers,
@@ -159,7 +148,6 @@ def extract_bilibili_subtitle(url: str) -> dict | None:
         if not subtitle_list:
             return None
 
-        # 3. 选择最佳字幕：中文人工字幕 > 中文自动字幕 > 第一个
         best = subtitle_list[0]
         for s in subtitle_list:
             lan = s.get('lan', '')
@@ -174,13 +162,11 @@ def extract_bilibili_subtitle(url: str) -> dict | None:
         if not sub_url:
             return None
 
-        # 强制 HTTPS
         if sub_url.startswith('//'):
             sub_url = 'https:' + sub_url
         if sub_url.startswith('http://'):
             sub_url = 'https://' + sub_url[7:]
 
-        # 4. 下载字幕 JSON
         sub_req = urllib.request.Request(sub_url, headers=headers)
         sub_json = json.loads(urllib.request.urlopen(sub_req, timeout=15).read())
         body = sub_json.get('body', [])
@@ -211,6 +197,34 @@ def extract_bilibili_subtitle(url: str) -> dict | None:
             'full_text': full_text,
             'text': '\n'.join(formatted_lines),
         }
+
+    except Exception:
+        return None
+
+
+def extract_bilibili_subtitle(url: str) -> dict | None:
+    """B 站专用：通过 dm/view API 获取 CC 字幕（P1）。"""
+    m = re.search(r'(BV[a-zA-Z0-9]+)', url)
+    if not m:
+        return None
+    bvid = m.group(1)
+
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Referer': f'https://www.bilibili.com/video/{bvid}',
+        }
+        view_req = urllib.request.Request(
+            f'https://api.bilibili.com/x/web-interface/view?bvid={bvid}',
+            headers=headers,
+        )
+        view_data = json.loads(urllib.request.urlopen(view_req, timeout=15).read())
+        cid = view_data.get('data', {}).get('cid')
+        aid = view_data.get('data', {}).get('aid')
+        if not cid or not aid:
+            return None
+
+        return extract_bilibili_subtitle_by_cid(bvid, cid, aid)
 
     except Exception:
         return None

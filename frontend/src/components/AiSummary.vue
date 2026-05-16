@@ -33,6 +33,8 @@ const props = defineProps({
   notesSections: Object,
   flashcards: Array,
   generationStage: String,
+  multiParts: { type: Array, default: () => [] },
+  currentSummarizePart: { type: Number, default: 1 },
   onSummarize: Function,
   onRegenerateSummary: Function,
   onRegenerateMindmap: Function,
@@ -40,16 +42,100 @@ const props = defineProps({
   onRegenerateSubtitle: Function,
   onFetchSubtitle: Function,
   onSendQuestion: Function,
+  onSwitchPart: Function,
 })
 
 const isLimitError = computed(() => props.error && props.error.includes('免费次数'))
 
 const activeSubTab = ref('summary')
 const chatInput = ref('')
+const partsNavScroll = ref(null)
+const canScrollLeft = ref(false)
+const canScrollRight = ref(false)
+
+function updateScrollState() {
+  const el = partsNavScroll.value
+  if (!el) return
+  canScrollLeft.value = el.scrollLeft > 2
+  canScrollRight.value = el.scrollLeft < el.scrollWidth - el.clientWidth - 2
+}
+
+function scrollParts(dir) {
+  const el = partsNavScroll.value
+  if (!el) return
+  el.scrollBy({ left: dir * 200, behavior: 'smooth' })
+}
+
+watch(() => props.multiParts, () => {
+  nextTick(() => updateScrollState())
+}, { immediate: true })
 
 const hasMindmap = computed(() => !!props.mindmapMarkdown)
 const hasNotes = computed(() => !!props.notesMarkdown)
 const hasSubtitle = computed(() => !!props.subtitleText)
+
+const subtitleSegments = computed(() => {
+  if (!props.subtitleText) return []
+  let lines = props.subtitleText.split('\n').map(l => l.trim()).filter(l => l.length > 0)
+  // 如果只有一行（无换行），按标点或空格分段
+  if (lines.length <= 1 && props.subtitleText.length > 50) {
+    // 先尝试按中文标点分段
+    let split = props.subtitleText
+      .replace(/([。！？；])/g, '$1\n')
+      .split('\n')
+      .map(l => l.trim())
+      .filter(l => l.length > 0)
+    // 如果分段后每段都很长（说明标点少），按空格分段，每段约30-50字
+    if (split.length <= 3) {
+      const words = props.subtitleText.split(/\s+/)
+      split = []
+      let buf = []
+      let len = 0
+      for (const w of words) {
+        if (len + w.length > 40 && buf.length > 0) {
+          split.push(buf.join(' '))
+          buf = []
+          len = 0
+        }
+        buf.push(w)
+        len += w.length + 1
+      }
+      if (buf.length > 0) split.push(buf.join(' '))
+    }
+    lines = split
+  }
+  return lines.map(line => {
+    const timeMatch = line.match(/^\[?(\d{1,2}:\d{2}(?::\d{2})?)\]?\s*(.*)/)
+    if (timeMatch) {
+      return { time: timeMatch[1], text: timeMatch[2] }
+    }
+    return { time: null, text: line }
+  })
+})
+
+const hasSubtitleSegments = computed(() => subtitleSegments.value.length > 0)
+
+const showDownloadMenu = ref(false)
+const downloadDropdownRef = ref(null)
+
+function toggleDownloadMenu() {
+  showDownloadMenu.value = !showDownloadMenu.value
+}
+
+function downloadSubtitleFormat(format) {
+  subtitleFormat.value = format
+  showDownloadMenu.value = false
+  downloadSubtitle()
+}
+
+function handleClickOutside(e) {
+  if (downloadDropdownRef.value && !downloadDropdownRef.value.contains(e.target)) {
+    showDownloadMenu.value = false
+  }
+}
+
+onMounted(() => document.addEventListener('click', handleClickOutside))
+onUnmounted(() => document.removeEventListener('click', handleClickOutside))
 
 function handleStart() {
   props.onSummarize(false)
@@ -374,7 +460,7 @@ async function downloadSVG() {
     const exportSvg = buildExportableSvg(stage.svg)
     setExportViewBox(exportSvg, dims)
     exportSvg.setAttribute('width', '100%')
-    exportSvg.setAttribute('height', 'auto')
+    exportSvg.removeAttribute('height')
     exportSvg.setAttribute('style', 'display:block;background:#0F172A;max-width:100%;height:auto;')
     const svgString = serializeSvg(exportSvg)
     const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' })
@@ -487,8 +573,28 @@ function segmentsToTXT(segments) {
 const subtitleFormat = ref('srt')
 
 function downloadSubtitle() {
-  const segments = props.subtitleInfo?.segments
-  if (!segments || !segments.length) return
+  let segments = props.subtitleInfo?.segments
+  // 如果没有 segments（从缓存加载），从文本生成
+  if (!segments || !segments.length) {
+    if (!props.subtitleText) return
+    const lines = props.subtitleText.split('\n').map(l => l.trim()).filter(l => l.length > 0)
+    let curTime = 0
+    segments = lines.map(l => {
+      // 尝试解析内嵌时间戳 [MM:SS]
+      const m = l.match(/^\[?(\d{1,2}:\d{2}(?::\d{2})?)\]?\s*(.*)/)
+      if (m) {
+        const parts = m[1].split(':').map(Number)
+        const sec = parts.length === 3 ? parts[0]*3600 + parts[1]*60 + parts[2] : parts[0]*60 + parts[1]
+        curTime = sec
+        return { start: sec, end: sec + 3, text: m[2] }
+      }
+      // 无时间戳，按每句约 4 秒估算
+      const start = curTime
+      curTime += 4
+      return { start, end: curTime, text: l }
+    })
+  }
+  if (!segments.length) return
   let content, ext, mime
   const fmt = subtitleFormat.value
   if (fmt === 'vtt') {
@@ -506,10 +612,6 @@ function downloadSubtitle() {
   a.click()
   URL.revokeObjectURL(url)
 }
-
-const hasSubtitleSegments = computed(() =>
-  props.subtitleInfo?.segments && props.subtitleInfo.segments.length > 0
-)
 
 const stageLabels = {
   subtitle_loaded: '字幕加载完成',
@@ -584,6 +686,33 @@ function downloadNotes() {
 
     <!-- 结果展示区（含 4 个子 Tab） -->
     <div v-if="result || loading" class="summary-content">
+      <!-- 多P分P选择器 -->
+      <div v-if="multiParts.length > 1" class="parts-nav">
+        <button v-show="canScrollLeft" class="parts-nav-arrow left" @click="scrollParts(-1)">
+          <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+        </button>
+        <div class="parts-nav-scroll" ref="partsNavScroll" @scroll="updateScrollState">
+          <button
+            v-for="part in multiParts"
+            :key="part.index"
+            class="parts-nav-btn"
+            :class="{
+              active: currentSummarizePart === part.index,
+              loading: loading && currentSummarizePart === part.index
+            }"
+            @click="onSwitchPart && onSwitchPart(part.index)"
+            :title="part.title"
+          >
+            <span class="parts-nav-index">P{{ part.index }}</span>
+            <span class="parts-nav-title">{{ part.title }}</span>
+            <span v-if="loading && currentSummarizePart === part.index" class="parts-nav-spinner"></span>
+          </button>
+        </div>
+        <button v-show="canScrollRight" class="parts-nav-arrow right" @click="scrollParts(1)">
+          <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"/></svg>
+        </button>
+      </div>
+
       <!-- 子 Tab 栏 -->
       <div class="sub-tab-bar">
         <button class="sub-tab-btn" :class="{ active: activeSubTab === 'summary' }" @click="activeSubTab = 'summary'">
@@ -597,7 +726,6 @@ function downloadNotes() {
         <button
           class="sub-tab-btn"
           :class="{ active: activeSubTab === 'mindmap' }"
-          :disabled="!hasMindmap"
           @click="activeSubTab = 'mindmap'"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="sub-tab-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" /></svg>
@@ -606,7 +734,6 @@ function downloadNotes() {
         <button
           class="sub-tab-btn"
           :class="{ active: activeSubTab === 'notes' }"
-          :disabled="!hasNotes && !loading"
           @click="activeSubTab = 'notes'"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="sub-tab-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" /></svg>
@@ -615,37 +742,11 @@ function downloadNotes() {
         <button
           class="sub-tab-btn"
           :class="{ active: activeSubTab === 'qa' }"
-          :disabled="!hasSubtitle"
           @click="handleTabQA"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="sub-tab-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 01-.825-.242m9.345-8.334a2.126 2.126 0 00-.476-.095 48.64 48.64 0 00-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0011.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V21l4.155-4.155" /></svg>
           问答
         </button>
-      </div>
-
-      <!-- 全局进度条：AI 分析过程中在所有子 Tab 均可见 -->
-      <div v-if="loading && (!regeneratingMode || regeneratingMode !== 'subtitle')" class="progress-bar-container">
-        <div class="progress-steps">
-          <div class="progress-step" :class="{ done: generationStage, active: !generationStage }">
-            <div class="step-circle"><span v-if="generationStage" class="step-check">&#10003;</span><span v-else class="step-spinner"></span></div>
-            <span class="step-label">字幕就绪</span>
-          </div>
-          <div class="progress-line" :class="{ filled: streamingText || notesMarkdown || mindmapMarkdown }"></div>
-          <div class="progress-step" :class="{ done: notesMarkdown || mindmapMarkdown, active: streamingText && !notesMarkdown && !mindmapMarkdown }">
-            <div class="step-circle"><span v-if="notesMarkdown || mindmapMarkdown" class="step-check">&#10003;</span><span v-else-if="streamingText" class="step-spinner"></span></div>
-            <span class="step-label">AI 摘要</span>
-          </div>
-          <div class="progress-line" :class="{ filled: mindmapMarkdown }"></div>
-          <div class="progress-step" :class="{ done: mindmapMarkdown, active: notesMarkdown && !mindmapMarkdown }">
-            <div class="step-circle"><span v-if="mindmapMarkdown" class="step-check">&#10003;</span><span v-else-if="notesMarkdown" class="step-spinner"></span></div>
-            <span class="step-label">思维导图</span>
-          </div>
-          <div class="progress-line" :class="{ filled: notesMarkdown && mindmapMarkdown && !loading }"></div>
-          <div class="progress-step" :class="{ done: !loading && notesMarkdown, active: mindmapMarkdown && loading }">
-            <div class="step-circle"><span v-if="!loading && notesMarkdown" class="step-check">&#10003;</span><span v-else-if="mindmapMarkdown && loading" class="step-spinner"></span></div>
-            <span class="step-label">学习笔记</span>
-          </div>
-        </div>
       </div>
 
       <!-- Tab: 摘要 -->
@@ -693,13 +794,6 @@ function downloadNotes() {
         <div v-if="subtitleError" class="subtitle-error-msg">{{ subtitleError }}</div>
         <div v-else-if="subtitleText">
           <div class="subtitle-toolbar">
-            <div class="subtitle-format-select">
-              <select v-model="subtitleFormat" class="format-select">
-                <option value="srt">SRT</option>
-                <option value="vtt">VTT</option>
-                <option value="txt">TXT</option>
-              </select>
-            </div>
             <button
               v-if="subtitleSource === 'whisper'"
               @click="handleRegenerateSubtitle"
@@ -710,18 +804,31 @@ function downloadNotes() {
               <svg viewBox="0 0 20 20" fill="currentColor" class="download-icon"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/></svg>
               重新识别
             </button>
-            <button
-              class="subtitle-download-btn"
-              :disabled="!hasSubtitleSegments"
-              :title="!hasSubtitleSegments ? '该字幕无分段数据，仅支持在线查看' : '下载字幕文件'"
-              @click="downloadSubtitle"
-            >
-              <svg viewBox="0 0 20 20" fill="currentColor" class="download-icon"><path d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z"/><path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"/></svg>
-              下载
-            </button>
+            <div class="subtitle-download-dropdown" ref="downloadDropdownRef">
+              <button
+                class="subtitle-download-btn"
+                :disabled="!hasSubtitleSegments"
+                :title="!hasSubtitleSegments ? '该字幕无分段数据，仅支持在线查看' : '下载字幕文件'"
+                @click="toggleDownloadMenu"
+              >
+                <svg viewBox="0 0 20 20" fill="currentColor" class="download-icon"><path d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z"/><path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"/></svg>
+                下载
+                <svg viewBox="0 0 20 20" fill="currentColor" class="dropdown-arrow"><path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd"/></svg>
+              </button>
+              <div v-if="showDownloadMenu" class="download-menu">
+                <button @click="downloadSubtitleFormat('srt')" class="download-menu-item">SRT 字幕</button>
+                <button @click="downloadSubtitleFormat('vtt')" class="download-menu-item">VTT 字幕</button>
+                <button @click="downloadSubtitleFormat('txt')" class="download-menu-item">纯文本 TXT</button>
+              </div>
+            </div>
           </div>
           <div class="subtitle-text-wrapper">
-            <pre class="subtitle-text">{{ subtitleText }}</pre>
+            <div class="subtitle-segments">
+              <div v-for="(seg, i) in subtitleSegments" :key="i" class="subtitle-segment">
+                <span v-if="seg.time" class="subtitle-time">{{ seg.time }}</span>
+                <span class="subtitle-line">{{ seg.text }}</span>
+              </div>
+            </div>
           </div>
         </div>
         <div v-else class="subtitle-empty">
@@ -760,7 +867,10 @@ function downloadNotes() {
           <div class="skeleton-line skeleton-medium"></div>
           <p class="loading-text">正在生成思维导图...</p>
         </div>
-        <div v-else class="mindmap-empty">请先生成总结以查看思维导图</div>
+        <div v-else class="mindmap-empty">
+          <p>思维导图将在总结完成后自动生成</p>
+          <p class="mindmap-empty-hint">请先在"摘要"标签页生成 AI 总结</p>
+        </div>
       </div>
 
       <!-- Tab: 学习笔记 -->
@@ -872,12 +982,32 @@ function downloadNotes() {
 .streaming-text :deep(a) { color: var(--accent-blue); }
 
 /* 子 Tab 栏 */
+/* 多P分P选择器 */
+.parts-nav { margin-bottom: 1rem; position: relative; display: flex; align-items: center; }
+.parts-nav-scroll { display: flex; gap: 0.5rem; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.1) transparent; padding: 0.25rem 0; flex: 1; min-width: 0; }
+.parts-nav-scroll::-webkit-scrollbar { height: 4px; }
+.parts-nav-scroll::-webkit-scrollbar-track { background: transparent; }
+.parts-nav-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+.parts-nav-arrow { flex-shrink: 0; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; background: rgba(255,255,255,0.06); border: 1px solid var(--border); border-radius: 6px; color: var(--text-muted); cursor: pointer; transition: all 0.15s; padding: 0; }
+.parts-nav-arrow:hover { background: rgba(255,255,255,0.12); color: var(--text-secondary); }
+.parts-nav-arrow svg { width: 14px; height: 14px; }
+.parts-nav-arrow.left { margin-right: 0.25rem; }
+.parts-nav-arrow.right { margin-left: 0.25rem; }
+.parts-nav-btn { display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.4rem 0.75rem; background: rgba(255,255,255,0.04); border: 1px solid var(--border); border-radius: 8px; color: var(--text-muted); font-size: 0.8125rem; cursor: pointer; transition: all 0.2s; white-space: nowrap; flex-shrink: 0; max-width: 200px; }
+.parts-nav-btn:hover { background: rgba(255,255,255,0.08); color: var(--text-secondary); border-color: rgba(255,255,255,0.12); }
+.parts-nav-btn.active { background: rgba(99,102,241,0.12); border-color: rgba(99,102,241,0.4); color: var(--accent-blue, #818CF8); }
+.parts-nav-btn.loading { pointer-events: none; opacity: 0.8; }
+.parts-nav-index { font-weight: 600; font-size: 0.75rem; color: var(--accent-blue, #818CF8); opacity: 0.8; }
+.parts-nav-btn.active .parts-nav-index { opacity: 1; }
+.parts-nav-title { overflow: hidden; text-overflow: ellipsis; }
+.parts-nav-spinner { width: 12px; height: 12px; border: 2px solid rgba(99,102,241,0.3); border-top-color: var(--accent-blue, #818CF8); border-radius: 50%; animation: spin 0.8s linear infinite; flex-shrink: 0; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
 .sub-tab-bar { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 1.25rem; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
 .sub-tab-bar::-webkit-scrollbar { display: none; }
 .sub-tab-btn { padding: 0.625rem 0.75rem; background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--text-muted); font-size: 0.8125rem; font-weight: 500; cursor: pointer; transition: all 0.15s; display: inline-flex; align-items: center; gap: 0.3rem; white-space: nowrap; flex-shrink: 0; }
 .sub-tab-btn:hover { color: var(--text-secondary); }
 .sub-tab-btn.active { color: var(--accent-blue); border-bottom-color: var(--accent-blue); }
-.sub-tab-btn:disabled { color: var(--border); cursor: not-allowed; }
 .sub-tab-icon { width: 14px; height: 14px; flex-shrink: 0; }
 
 .sub-tab-panel { min-height: 100px; }
@@ -933,12 +1063,40 @@ function downloadNotes() {
 
 /* 字幕展示 */
 .subtitle-toolbar { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
-.format-select { padding: 0.375rem 0.5rem; background: rgba(255,255,255,0.05); border: 1px solid var(--border); border-radius: 6px; color: var(--text-secondary); font-size: 0.8125rem; outline: none; cursor: pointer; }
-.format-select:focus { border-color: var(--accent-blue); }
 .subtitle-download-btn { display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.375rem 0.75rem; background: rgba(59, 130, 246, 0.12); border: 1px solid rgba(59, 130, 246, 0.25); border-radius: 6px; color: #93C5FD; font-size: 0.8125rem; font-weight: 500; cursor: pointer; transition: all 0.15s; }
 .subtitle-download-btn:hover:not(:disabled) { background: rgba(59, 130, 246, 0.2); border-color: rgba(59, 130, 246, 0.4); }
 .subtitle-download-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 .download-icon { width: 14px; height: 14px; }
+.dropdown-arrow { width: 14px; height: 14px; margin-left: 0.25rem; }
+.subtitle-download-dropdown { position: relative; display: inline-block; }
+.download-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  background: rgba(30, 32, 48, 0.98);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px;
+  min-width: max-content;
+  z-index: 10;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
+}
+.download-menu-item {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  text-align: left;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+  white-space: nowrap;
+}
+.download-menu-item:hover { background: rgba(255, 255, 255, 0.08); }
 .subtitle-text-wrapper {
   max-height: 500px;
   overflow-y: auto;
@@ -953,7 +1111,26 @@ function downloadNotes() {
 .subtitle-text-wrapper::-webkit-scrollbar-track { background: transparent; }
 .subtitle-text-wrapper::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 3px; }
 .subtitle-text-wrapper::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
-.subtitle-text { font-family: 'Noto Sans SC', monospace; font-size: 0.8125rem; line-height: 1.6; color: var(--text-secondary); white-space: pre-wrap; margin: 0; }
+.subtitle-segments { display: flex; flex-direction: column; gap: 0.5rem; }
+.subtitle-segment {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.375rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  line-height: 1.6;
+}
+.subtitle-time {
+  flex-shrink: 0;
+  width: 3.5rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.subtitle-line {
+  flex: 1;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
 .subtitle-empty { padding: 2rem; text-align: center; }
 .subtitle-empty-text { font-size: 0.9375rem; color: var(--text-secondary); margin: 0 0 0.5rem 0; }
 .subtitle-empty-hint { font-size: 0.8125rem; color: var(--text-muted); margin: 0; }
@@ -984,6 +1161,7 @@ function downloadNotes() {
 }
 .mindmap-svg { display: block; width: 100%; min-height: 500px; }
 .mindmap-empty { padding: 2rem; text-align: center; color: var(--text-muted); }
+.mindmap-empty-hint { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem; }
 .mindmap-loading { display: flex; flex-direction: column; align-items: center; gap: 0.75rem; padding: 2rem; }
 .mindmap-loading .loading-text { font-size: 0.8125rem; color: var(--text-muted); margin: 0; }
 
@@ -1177,8 +1355,34 @@ function downloadNotes() {
 .notes-empty { padding: 2rem; text-align: center; color: var(--text-muted); }
 
 @media (max-width: 768px) {
+  /* 子 Tab 栏：缩小以放下 5 个 Tab */
+  .sub-tab-btn { padding: 0.5rem 0.5rem; font-size: 0.75rem; gap: 0.2rem; }
+  .sub-tab-icon { width: 12px; height: 12px; }
+  .sub-tab-bar { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.1) transparent; }
+  .sub-tab-bar::-webkit-scrollbar { display: block; height: 3px; }
+  .sub-tab-bar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+
+  /* 内容区高度限制 */
+  .summary-scroll { max-height: 60vh; }
   .mindmap-container { padding: 0.5rem; }
-  .chat-container { height: 300px; }
-  .notes-content { max-height: 400px; padding: 1rem; }
+  .chat-container { height: 50vh; }
+  .notes-content { max-height: 50vh; padding: 0.875rem; }
+
+  /* 笔记字体缩小 */
+  .notes-content :deep(h1) { font-size: 1.1rem; }
+  .notes-content :deep(h2) { font-size: 1rem; }
+  .notes-content :deep(h3) { font-size: 0.9375rem; }
+  .notes-content :deep(pre) { padding: 0.5rem 0.75rem; font-size: 0.75rem; }
+
+  /* 问答输入 */
+  .chat-input-row { gap: 0.375rem; }
+  .chat-input { font-size: 0.875rem; padding: 0.625rem 0.75rem; }
+  .chat-send-btn { padding: 0.625rem 1rem; font-size: 0.8125rem; }
+
+  /* 闪卡 */
+  .flashcard-answer { font-size: 0.8125rem; }
+
+  /* 分P选择器 */
+  .parts-nav-btn { padding: 0.375rem 0.625rem; font-size: 0.75rem; max-width: 150px; }
 }
 </style>

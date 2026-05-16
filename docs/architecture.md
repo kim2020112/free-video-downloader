@@ -15,7 +15,7 @@
 | 思维导图 | markmap-lib + markmap-view | 将 Markdown 列表渲染为交互式思维导图 |
 | 导图导出 | 原生 SVG + Canvas | SVG 走离屏重渲染与静态化导出，PNG 基于内联 SVG 生成 4K 位图，避免受展示区缩放影响 |
 | 进度推送 | WebSocket / SSE | 下载用 WebSocket（双向），AI 总结用 SSE（单向流式） |
-| 持久化 | SQLite | AI 结果缓存、Whisper 转录缓存、视频信息缓存，同 URL 不重复消耗资源 |
+| 持久化 | SQLite | AI 结果缓存、Whisper 转录缓存、视频信息缓存，同 URL 不重复消耗资源；多P视频按 `?p=N` 隔离缓存 |
 | 进程管理 | Uvicorn | 高性能 ASGI 服务器 |
 
 ## 2. 系统架构
@@ -103,6 +103,8 @@ sequenceDiagram
 ┌─ Pipeline 1: 平台 API ─────────────────────────────┐
 │  Bilibili CC 字幕 (api.bilibili.com/x/v2/dm/view)    │
 │  → 人工字幕优先，自动字幕次之                          │
+│  → 多P视频: 按分P的 cid 独立获取字幕                   │
+│    extract_bilibili_subtitle_by_cid(bvid, cid, aid)   │
 └──────────────────────────────────────────────────────┘
                     │ 无字幕
                     ▼
@@ -126,6 +128,8 @@ sequenceDiagram
 ┌─ Pipeline 4: OCR 硬字幕（预留接口）──────────────────┐
 └──────────────────────────────────────────────────────┘
 ```
+
+**多P视频字幕获取**：B站多P视频的每个分P有独立的 cid（内容ID）。`_get_subtitle_text()` 检测 URL 中的 `?p=N` 参数，匹配对应分P的 cid，调用 `extract_bilibili_subtitle_by_cid()` 获取该P的字幕。无 `?p=N` 参数时使用默认的 `extract_bilibili_subtitle(url)`。
 
 ### 3.3 AI 总结流水线
 
@@ -253,7 +257,7 @@ data: {"type": "done", "data": {}}
 - lang（语言代码）, name（显示名称）, ext（格式后缀）, is_auto（是否自动生成）
 
 **VideoPart**：分P条目（仅 B 站多P视频）
-- index（P序号）, title（分P标题）, duration, filesize（估算字节数）, filesize_str
+- index（P序号）, title（分P标题）, cid（分P内容ID，用于按P获取字幕）, duration, filesize（估算字节数）, filesize_str
 
 **DownloadRequest**：下载请求
 - url, format_id, concat_parts（是否合并分P）, selected_parts（选中的分P索引列表）
@@ -298,7 +302,7 @@ App.vue
 │   │   │   ├── download-button    # 下载按钮（蓝青渐变，全宽）
 │   │   │   └── progress-card      # 下载进度（shimmer动画，状态图标+边框变色）
 │   │   └── [AI 总结标签页]
-│   │       └── AiSummary.vue      # AI 总结组件（内含：字幕加载状态 + 流式摘要 + 章节大纲 + 思维导图 + AI 问答，Markdown 渲染）
+│   │       └── AiSummary.vue      # AI 总结组件（内含：分P选择器 + 字幕加载状态 + 流式摘要 + 章节大纲 + 思维导图 + 学习笔记 + AI 问答，Markdown 渲染）
 │   └── history-card           # 下载记录（状态图标+标题+时间戳+保存按钮）
 ├── FeaturesSection.vue        # 特性展示区（6 个卡片，3 列排列，含 2 个 Pro 卡片）
 └── FooterSection.vue          # 页脚（品牌 + 链接 + 平台列表 + 版权）
@@ -334,6 +338,8 @@ App.vue
 | 字幕校正 | AI 后处理（temperature=0.1）| 利用视频元数据修正 Whisper 专有名词、同音错字；失败降级到原始文本 |
 | 视频信息缓存 | SQLite video_info_cache 表 | 避免同一视频重复调用 yt-dlp 解析（单次 20s+）；超长视频即时拦截 |
 | B 站字幕获取 | 优先 Bilibili CC 字幕 API (`dm/view`)，降级 yt-dlp | yt-dlp 对 Bilibili 只返回弹幕 XML；CC 字幕 API 可获取真实人工/自动字幕 |
+| 多P视频 AI 总结 | 按分P独立获取字幕+独立缓存+独立总结 | 多P视频每P是一个章节，全部总结不可行；`?p=N` 参数贯穿整个流水线 |
+| 多P缓存隔离 | URL 中 `?p=N` 存在时跳过指纹匹配 | 同一 BV 号不同分P共享指纹，直接按指纹匹配会命中错误缓存 |
 | AI SDK 端点 | Anthropic 兼容端点 (`/anthropic`) | 支持流式 MessageStream（thinking + text 双轨）；OpenAI 兼容端点无此能力 |
 | Markdown 渲染 | `marked` + `DOMPurify` + `v-html` | 轻量无框架依赖；XSS 防护；AI 输出的结构化内容可读性大幅提升 |
 
@@ -347,7 +353,7 @@ App.vue
 问题：多P视频默认被 yt-dlp 当作 playlist 处理，导致解析慢/失败/只有一个清晰度
 解决：
   1. 解析和下载均加 noplaylist=True，只处理当前P
-  2. 解析后调用 api.bilibili.com/x/player/pagelist 获取完整分P列表
+  2. 解析后调用 api.bilibili.com/x/player/pagelist 获取完整分P列表（含 cid）
   3. 前端展示分P列表（checkbox 多选）：
      - 点击 checkbox：勾选/取消，用于批量下载
      - 分P信息区域为纯展示（<div>），不触发页面刷新，避免手机误触
@@ -358,6 +364,18 @@ App.vue
   4. _download_concat_parts(selected_indices) 逐P下载到独立子目录，
      再用 ffmpeg -f concat -c copy 合并为 merged.mp4
      （不用 concat_playlist='always'，因为同名文件会互相覆盖）
+
+多P AI 总结：
+  - 多P视频通常为长视频（数小时~数十小时），每P为一个章节/知识点
+  - 不能一次性总结全部P，需按P独立总结
+  - 前端 AiSummary.vue 新增分P选择器（parts-nav）：
+    - 水平滚动列表 + 左右箭头按钮
+    - 每个按钮显示 P序号 + 分P标题
+    - 当前总结的P高亮，正在加载的P显示 spinner
+    - scrollbar-width: thin 保证可发现性
+  - App.vue 管理 currentSummarizePart 状态，summarizeUrl 计算属性自动拼接 ?p=N
+  - 所有 AI 操作（摘要/导图/笔记/字幕）使用 summarizeUrl.value
+  - 后端 stream_routes.py 检测 ?p=N 参数，匹配对应分P的 cid 获取字幕
 
 文件大小估算：
   - yt-dlp 的 filesize/filesize_approx 对 Bilibili 不准，改用码率估算

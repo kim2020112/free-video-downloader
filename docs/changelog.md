@@ -1,5 +1,42 @@
 # 变更记录
 
+## [2.7.0] - 2026-05-16
+
+### 新增
+
+- **多P视频 AI 总结**（`backend/api/stream_routes.py` + `backend/core/summarizer.py` + `frontend/src/App.vue` + `frontend/src/components/AiSummary.vue`）：
+  - B站多P视频支持按分P独立 AI 总结，每P拥有独立字幕、缓存和总结结果
+  - 新增 `extract_bilibili_subtitle_by_cid(bvid, cid, aid)` 函数，通过 B站 CC 字幕 API 按分P的 cid 获取字幕
+  - `VideoPart` 模型新增 `cid` 字段，`_fetch_bilibili_parts()` 返回每P的 cid
+  - 前端新增分P选择器（`parts-nav`）：水平滚动列表 + 左右箭头按钮，显示 P序号、标题、加载状态
+  - `currentSummarizePart` 状态管理 + `summarizeUrl` 计算属性，自动保留 `?p=N` 参数
+  - 所有 AI 操作（总结/重新生成摘要/导图/笔记/字幕）均使用 `summarizeUrl.value`，确保操作正确的分P
+  - 多P URL 的缓存按 `?p=N` 隔离，跳过指纹匹配避免不同分P命中同一缓存
+  - URL 中 `?p=N` 参数在 `canonical_url` 中正确保留
+
+### 修复
+
+- **B站 extractor 大小写匹配**（`backend/api/stream_routes.py`）：
+  - `info.extractor` 为 `'BiliBili'`（大写B），原代码 `'bilibili' in extractor` 为 False，导致多P字幕提取被静默跳过
+  - 修复为 `'bilibili' in (info.extractor or '').lower()`
+
+- **分P选择器滚动修复**（`frontend/src/components/AiSummary.vue`）：
+  - 原 `scrollbar-width: none` 隐藏了滚动条，用户无法发现可滚动内容
+  - 改为 `scrollbar-width: thin` + 细滚动条样式
+  - 新增左右箭头按钮，根据滚动位置自动显示/隐藏
+  - 新增 `updateScrollState()` 和 `scrollParts()` 函数
+
+### 优化
+
+- **移动端响应式适配**（`frontend/src/components/HeroSection.vue` + `frontend/src/components/AiSummary.vue` + `frontend/src/App.vue`）：
+  - HeroSection：768px 以下输入框+按钮改为垂直堆叠，按钮全宽，标题/副标题缩小
+  - AiSummary：子 Tab 按钮缩小（padding/font-size），横向滚动显示细滚动条
+  - AiSummary：笔记/问答/摘要内容区使用 `vh` 单位，适配手机屏幕高度
+  - AiSummary：分P选择器按钮在手机上缩小显示
+  - App.vue：视频卡片 padding 缩小，视频标题/元数据字体缩小，格式网格单列，分P列表适配
+
+---
+
 ## [2.5.0] - 2026-05-15
 
 ### 新增

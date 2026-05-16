@@ -43,6 +43,7 @@ class SubtitleTrack(BaseModel):
 class VideoPart(BaseModel):
     index: int
     title: str
+    cid: Optional[int] = None
     duration: Optional[int] = None
     filesize: Optional[int] = None
     filesize_str: Optional[str] = None

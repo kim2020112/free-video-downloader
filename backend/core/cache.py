@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 import sqlite3
 import time
 from datetime import datetime, timezone, timedelta
@@ -54,10 +55,12 @@ def get_cached(url: str, fingerprint: str = None) -> dict | None:
     """获取缓存的 AI 结果。先按指纹查，再按 URL hash。"""
     h = _url_hash(url)
     tz = timezone(timedelta(hours=8))
+    # 多P视频（URL 含 ?p=N）跳过指纹匹配，避免不同分P命中同一缓存
+    is_multipart = bool(re.search(r'[?&]p=\d+', url))
     with sqlite3.connect(str(DB_PATH)) as conn:
         row = None
-        # 指纹优先
-        if fingerprint:
+        # 指纹优先（多P视频跳过）
+        if fingerprint and not is_multipart:
             row = conn.execute(
                 "SELECT url, video_title, subtitle_text, source, result_json, created_at, updated_at FROM ai_cache WHERE fingerprint = ?",
                 (fingerprint,),
@@ -257,8 +260,9 @@ _ensure_video_info_table()
 def get_video_info_cache(url: str, fingerprint: str = None) -> dict | None:
     """获取缓存的视频基本信息。先指纹，再 URL。"""
     h = _url_hash(url)
+    is_multipart = bool(re.search(r'[?&]p=\d+', url))
     with sqlite3.connect(str(DB_PATH)) as conn:
-        if fingerprint:
+        if fingerprint and not is_multipart:
             row = conn.execute(
                 "SELECT duration, title, info_json FROM video_info_cache WHERE fingerprint = ?",
                 (fingerprint,),

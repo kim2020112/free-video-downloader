@@ -5,6 +5,7 @@
 
 import asyncio
 import json
+import re
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -14,6 +15,7 @@ from core.summarizer import (
     clean_subtitle_text, _clean_danmaku_xml,
     summarize_from_description,
     extract_bilibili_subtitle,
+    extract_bilibili_subtitle_by_cid,
 )
 from core.ai_client import (
     stream_summarize, stream_chat, stream_generate_notes,
@@ -76,7 +78,20 @@ async def _get_subtitle_text(url: str, info, lang: str = None, fingerprint: str 
         return cached_sub["full_text"], cached_sub["source"], cached_sub["language"]
 
     # ── Pipeline 1: Bilibili CC 字幕 API ──
-    bilibili_sub = extract_bilibili_subtitle(url)
+    bilibili_sub = None
+    if 'bilibili' in (info.extractor or '').lower():
+        # 多P视频：用指定分P的 cid 获取字幕
+        p_match = re.search(r'[?&]p=(\d+)', url)
+        parts = getattr(info, 'parts', []) or []
+        if p_match and len(parts) > 1:
+            p_index = int(p_match.group(1))
+            part = next((p for p in parts if p.index == p_index), None)
+            if part and part.cid:
+                bvid_m = re.search(r'(BV\w+)', url)
+                if bvid_m:
+                    bilibili_sub = extract_bilibili_subtitle_by_cid(bvid_m.group(1), part.cid)
+        else:
+            bilibili_sub = extract_bilibili_subtitle(url)
     if bilibili_sub and bilibili_sub['has_subtitle']:
         text = bilibili_sub['full_text']
         sub_lang = bilibili_sub.get('language', 'zh')
@@ -352,6 +367,11 @@ async def summarize_stream(req: SummarizeRequest):
         info = downloader.parse_info(url)
         fp = video_fingerprint(info.extractor, info.id) if info.extractor and info.id else None
         canonical_url = info.webpage_url or url
+        # 多P视频：确保 canonical_url 保留 ?p=N 参数（yt-dlp 可能丢弃）
+        p_match = re.search(r'[?&]p=(\d+)', url)
+        if p_match and not re.search(r'[?&]p=\d+', canonical_url):
+            sep = '&' if '?' in canonical_url else '?'
+            canonical_url = f"{canonical_url}{sep}p={p_match.group(1)}"
         save_video_info_cache(canonical_url, info, fingerprint=fp)
 
         # ── 二次缓存检查（同视频不同 URL 变体，按指纹命中） ──

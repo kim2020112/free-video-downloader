@@ -245,20 +245,49 @@ const platforms = [
 
 @media (max-width: 768px) {
   .hero-section {
-    padding: 3rem 1.25rem 2.5rem;
+    padding: 2.5rem 1rem 2rem;
   }
 
   .hero-title {
-    font-size: 2rem;
+    font-size: 1.75rem;
   }
 
   .hero-subtitle {
-    font-size: 0.9375rem;
-    margin-bottom: 2rem;
+    font-size: 0.875rem;
+    margin-bottom: 1.5rem;
+    line-height: 1.5;
   }
 
   .hero-input-section {
     flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .hero-input {
+    padding: 0.875rem 1rem 0.875rem 2.75rem;
+    font-size: 0.875rem;
+  }
+
+  .input-icon {
+    left: 0.875rem;
+    width: 18px;
+    height: 18px;
+  }
+
+  .hero-parse-button {
+    width: 100%;
+    padding: 0.875rem 1.5rem;
+    font-size: 0.9375rem;
+  }
+
+  .trust-badges {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .trust-badge {
+    font-size: 0.75rem;
   }
 
   .platform-tags {
@@ -266,8 +295,8 @@ const platforms = [
   }
 
   .platform-tag {
-    padding: 0.25rem 0.75rem;
-    font-size: 0.75rem;
+    padding: 0.25rem 0.625rem;
+    font-size: 0.6875rem;
   }
 }
 </style>
