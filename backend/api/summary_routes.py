@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException
 from core.summary_models import SummarizeRequest, SummaryResult, ChapterItem, MindMapNode
 from core.summarizer import clean_subtitle_text, summarize_subtitle, summarize_from_description
 from core.whisper import transcribe_video, is_model_available
-from core.cache import get_whisper_cache, save_whisper_cache, get_video_info_cache, save_video_info_cache
+from core.cache import get_whisper_cache, save_whisper_cache, get_video_info_cache, save_video_info_cache, video_fingerprint
 from core.ai_client import correct_subtitle
 from config import SUBTITLE_CORRECTION_ENABLED, WHISPER_MAX_DURATION
 
@@ -84,12 +84,14 @@ async def summarize_video(req: SummarizeRequest):
             )
 
         info = downloader.parse_info(url)
-        save_video_info_cache(url, info)
+        fp = video_fingerprint(info.extractor, info.id) if info.extractor and info.id else None
+        canonical_url = info.webpage_url or url
+        save_video_info_cache(canonical_url, info, fingerprint=fp)
 
         # 无字幕时降级：Whisper 转录 > 视频简介
         whisper_text = None
         if not info.subtitles and is_model_available() and not (info.duration and info.duration > WHISPER_MAX_DURATION):
-            whisper_text = get_whisper_cache(url)
+            whisper_text = get_whisper_cache(canonical_url, fingerprint=fp)
             if not whisper_text or len(whisper_text.strip()) < 50:
                 try:
                     whisper_text = await asyncio.wait_for(
@@ -110,7 +112,7 @@ async def summarize_video(req: SummarizeRequest):
                                 )
                             except (asyncio.TimeoutError, Exception) as e:
                                 print(f"[SubtitleCorrection] 校正失败，使用原始文本: {e}")
-                        save_whisper_cache(url, whisper_text, req.lang or "auto", raw_text)
+                        save_whisper_cache(canonical_url, whisper_text, req.lang or "auto", raw_text, fingerprint=fp)
                 except (asyncio.TimeoutError, Exception):
                     whisper_text = None
 
@@ -152,7 +154,7 @@ async def summarize_video(req: SummarizeRequest):
             # 字幕内容无效（如弹幕），先尝试 Whisper 转录
             whisper_text = None
             if is_model_available() and not (info.duration and info.duration > WHISPER_MAX_DURATION):
-                whisper_text = get_whisper_cache(url)
+                whisper_text = get_whisper_cache(canonical_url, fingerprint=fp)
                 if not whisper_text or len(whisper_text.strip()) < 50:
                     try:
                         whisper_text = await asyncio.wait_for(
@@ -173,7 +175,7 @@ async def summarize_video(req: SummarizeRequest):
                                     )
                                 except (asyncio.TimeoutError, Exception) as e:
                                     print(f"[SubtitleCorrection] 校正失败，使用原始文本: {e}")
-                            save_whisper_cache(url, whisper_text, req.lang or "auto", raw_text)
+                            save_whisper_cache(canonical_url, whisper_text, req.lang or "auto", raw_text, fingerprint=fp)
                     except (asyncio.TimeoutError, Exception):
                         whisper_text = None
 

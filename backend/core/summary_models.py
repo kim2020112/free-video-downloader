@@ -7,6 +7,8 @@ from typing import Optional
 class SummarizeRequest(BaseModel):
     url: str
     lang: Optional[str] = None
+    force: bool = False
+    mode: str = "full"  # "full" | "summary" | "mindmap" | "notes" | "subtitle"
 
 
 class ChapterItem(BaseModel):

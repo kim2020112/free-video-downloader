@@ -65,7 +65,7 @@ def _clean_json_subtitle(content: str) -> str:
                 t = seg.get('utf8', '')
                 if t and t.strip() and t.strip() != '\n':
                     texts.append(t.strip())
-        return ' '.join(texts)
+        return '\n'.join(texts)
     except (json.JSONDecodeError, KeyError):
         return _clean_plain_text(content)
 

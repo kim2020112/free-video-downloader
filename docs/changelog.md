@@ -47,6 +47,29 @@
 
 ---
 
+## [2.6.0] - 2026-05-16
+
+### 新增
+
+- **Chunk Summary 首片优先优化**（`backend/core/ai_client.py` + `backend/api/stream_routes.py`）：
+  - 新增 `stream_chunk_summaries()` 生成器，替代阻塞式 `_chunk_summarize()`
+  - 长视频（字幕 >60000 字符）分两阶段流式输出：
+    - **初步摘要**：首片完成（~15s）即开始流式输出，前端显示"基于视频前段内容"横幅
+    - **完整摘要**：全部片完成后再输出全面摘要，覆盖初步摘要
+  - 首片使用详细提示词（200-300 字+核心概念），后续片精简（100-150 字），优化等待体验
+  - 思维导图和笔记复用合并后的摘要文本，避免重复分片（总计 N+4 次 API 调用 vs 旧版 3N+3 次）
+  - 短视频（单一片）走原路径不变
+
+### 修复
+
+- **Tab 布局修复**（`frontend/src/App.vue`）：AI 总结/视频下载两个 tab 按钮改为 `flex: 1` 均分宽度
+- **进度条可见性修复**（`frontend/src/components/AiSummary.vue`）：AI 分析步骤条移至子 tab 栏上方，无论切换到哪个子 tab 都可见
+- **字幕文本粘连修复**（`backend/api/subtitle_text_routes.py` + `backend/core/summarizer.py`）：
+  - B站字幕 DB 缓存改为保存 `\n` 分隔文本，而非空格连接的 `full_text`
+  - `_clean_json_subtitle` 改为 `\n` 连接片段（原为空格连接）
+
+---
+
 ## [2.4.0] - 2026-05-15
 
 ### 新增

@@ -77,6 +77,10 @@ def _upsert_video(url, title, platform, uploader, duration, thumbnail_url, descr
             "INSERT INTO videos (url, title, platform, uploader, duration, thumbnail_url, description) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (url, title, platform, uploader, duration, thumbnail_url, description),
         )
+        # 保持最多 50 条
+        conn.execute(
+            "DELETE FROM videos WHERE id NOT IN (SELECT id FROM videos ORDER BY created_at DESC LIMIT 50)"
+        )
         return cursor.lastrowid
 
 

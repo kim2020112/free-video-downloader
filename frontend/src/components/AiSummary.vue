@@ -15,6 +15,8 @@ function renderMarkdown(text) {
 const props = defineProps({
   result: Object,
   loading: Boolean,
+  regeneratingMode: String,
+  subtitleSource: String,
   error: String,
   streamingText: String,
   subtitleText: String,
@@ -24,11 +26,18 @@ const props = defineProps({
   isChatStreaming: Boolean,
   chatError: String,
   subtitleInfo: Object,
+  isPartialSummary: Boolean,
   videoTitle: String,
   mindmapMarkdown: String,
   notesMarkdown: String,
+  notesSections: Object,
+  flashcards: Array,
   generationStage: String,
   onSummarize: Function,
+  onRegenerateSummary: Function,
+  onRegenerateMindmap: Function,
+  onRegenerateNotes: Function,
+  onRegenerateSubtitle: Function,
   onFetchSubtitle: Function,
   onSendQuestion: Function,
 })
@@ -43,7 +52,23 @@ const hasNotes = computed(() => !!props.notesMarkdown)
 const hasSubtitle = computed(() => !!props.subtitleText)
 
 function handleStart() {
-  props.onSummarize()
+  props.onSummarize(false)
+}
+
+function handleRegenerateSummary() {
+  props.onRegenerateSummary()
+}
+
+function handleRegenerateMindmap() {
+  props.onRegenerateMindmap()
+}
+
+function handleRegenerateNotes() {
+  props.onRegenerateNotes()
+}
+
+function handleRegenerateSubtitle() {
+  props.onRegenerateSubtitle()
 }
 
 function handleTabSubtitle() {
@@ -553,7 +578,7 @@ function downloadNotes() {
       <template v-else>
         <svg class="error-icon" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" /></svg>
         <span>{{ error }}</span>
-        <button @click="onSummarize" class="retry-btn">重试</button>
+        <button @click="handleRegenerateSummary" class="retry-btn">重试</button>
       </template>
     </div>
 
@@ -563,11 +588,11 @@ function downloadNotes() {
       <div class="sub-tab-bar">
         <button class="sub-tab-btn" :class="{ active: activeSubTab === 'summary' }" @click="activeSubTab = 'summary'">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="sub-tab-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" /></svg>
-          AI 摘要
+          摘要
         </button>
         <button class="sub-tab-btn" :class="{ active: activeSubTab === 'subtitle' }" @click="handleTabSubtitle">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="sub-tab-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" /></svg>
-          字幕原文
+          字幕
         </button>
         <button
           class="sub-tab-btn"
@@ -576,7 +601,7 @@ function downloadNotes() {
           @click="activeSubTab = 'mindmap'"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="sub-tab-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" /></svg>
-          思维导图
+          导图
         </button>
         <button
           class="sub-tab-btn"
@@ -585,7 +610,7 @@ function downloadNotes() {
           @click="activeSubTab = 'notes'"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="sub-tab-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" /></svg>
-          学习笔记
+          笔记
         </button>
         <button
           class="sub-tab-btn"
@@ -594,46 +619,73 @@ function downloadNotes() {
           @click="handleTabQA"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="sub-tab-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 01-.825-.242m9.345-8.334a2.126 2.126 0 00-.476-.095 48.64 48.64 0 00-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0011.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V21l4.155-4.155" /></svg>
-          AI 问答
+          问答
         </button>
+      </div>
+
+      <!-- 全局进度条：AI 分析过程中在所有子 Tab 均可见 -->
+      <div v-if="loading && (!regeneratingMode || regeneratingMode !== 'subtitle')" class="progress-bar-container">
+        <div class="progress-steps">
+          <div class="progress-step" :class="{ done: generationStage, active: !generationStage }">
+            <div class="step-circle"><span v-if="generationStage" class="step-check">&#10003;</span><span v-else class="step-spinner"></span></div>
+            <span class="step-label">字幕就绪</span>
+          </div>
+          <div class="progress-line" :class="{ filled: streamingText || notesMarkdown || mindmapMarkdown }"></div>
+          <div class="progress-step" :class="{ done: notesMarkdown || mindmapMarkdown, active: streamingText && !notesMarkdown && !mindmapMarkdown }">
+            <div class="step-circle"><span v-if="notesMarkdown || mindmapMarkdown" class="step-check">&#10003;</span><span v-else-if="streamingText" class="step-spinner"></span></div>
+            <span class="step-label">AI 摘要</span>
+          </div>
+          <div class="progress-line" :class="{ filled: mindmapMarkdown }"></div>
+          <div class="progress-step" :class="{ done: mindmapMarkdown, active: notesMarkdown && !mindmapMarkdown }">
+            <div class="step-circle"><span v-if="mindmapMarkdown" class="step-check">&#10003;</span><span v-else-if="notesMarkdown" class="step-spinner"></span></div>
+            <span class="step-label">思维导图</span>
+          </div>
+          <div class="progress-line" :class="{ filled: notesMarkdown && mindmapMarkdown && !loading }"></div>
+          <div class="progress-step" :class="{ done: !loading && notesMarkdown, active: mindmapMarkdown && loading }">
+            <div class="step-circle"><span v-if="!loading && notesMarkdown" class="step-check">&#10003;</span><span v-else-if="mindmapMarkdown && loading" class="step-spinner"></span></div>
+            <span class="step-label">学习笔记</span>
+          </div>
+        </div>
       </div>
 
       <!-- Tab: 摘要 -->
       <div v-show="activeSubTab === 'summary'" class="sub-tab-panel">
-        <div v-if="loading" class="progressive-stages">
-          <div class="stage-item" :class="{ done: streamingText }">
-            <span class="stage-dot"></span>
-            <span class="stage-label">AI 摘要生成</span>
-            <span v-if="streamingText" class="stage-check">&#10003;</span>
-            <span v-else class="stage-spinner"></span>
-          </div>
-          <div class="stage-item" :class="{ done: notesMarkdown }">
-            <span class="stage-dot"></span>
-            <span class="stage-label">学习笔记</span>
-            <span v-if="notesMarkdown" class="stage-check">&#10003;</span>
-            <span v-else-if="streamingText" class="stage-spinner"></span>
-          </div>
-          <div class="stage-item" :class="{ done: mindmapMarkdown }">
-            <span class="stage-dot"></span>
-            <span class="stage-label">思维导图</span>
-            <span v-if="mindmapMarkdown" class="stage-check">&#10003;</span>
-            <span v-else-if="notesMarkdown" class="stage-spinner"></span>
-          </div>
-        </div>
-        <div v-if="loading && !streamingText" class="loading-skeleton">
+        <div v-if="loading && (!regeneratingMode || regeneratingMode === 'summary') && !streamingText" class="loading-skeleton">
           <div class="skeleton-line skeleton-title"></div>
           <div class="skeleton-line skeleton-long"></div>
           <div class="skeleton-line skeleton-medium"></div>
           <div class="skeleton-line skeleton-long"></div>
           <div class="skeleton-line skeleton-short"></div>
         </div>
-        <div v-else class="summary-section">
-          <div class="summary-text prose prose-invert prose-sm max-w-none" v-html="renderMarkdown(streamingText || result.summary)"></div>
+        <div v-else class="summary-scroll">
+          <div class="summary-section">
+            <div class="summary-text prose prose-invert prose-sm max-w-none" v-html="renderMarkdown(streamingText || result.summary)"></div>
+          </div>
+          <div v-if="isPartialSummary && !loading" class="partial-banner">
+            <svg viewBox="0 0 20 20" fill="currentColor" class="partial-icon"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/></svg>
+            <span>基于视频前段内容的初步摘要，完整分析进行中...</span>
+          </div>
+          <!-- 学习闪卡 -->
+          <div v-if="flashcards && flashcards.length" class="flashcards-section">
+            <h4 class="flashcards-title">学习闪卡（{{ flashcards.length }} 张）</h4>
+            <div class="flashcards-grid">
+              <div v-for="(card, i) in flashcards" :key="i" class="flashcard-item">
+                <div class="flashcard-question">
+                  <span class="flashcard-label">Q{{ i + 1 }}</span>
+                  {{ card.question }}
+                </div>
+                <div class="flashcard-answer">
+                  <span class="flashcard-label">A</span>
+                  {{ card.answer }}
+                </div>
+              </div>
+            </div>
+          </div>
+          <button v-if="!loading" @click="handleRegenerateSummary" class="regenerate-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="regenerate-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182" /></svg>
+            重新生成摘要
+          </button>
         </div>
-        <button v-if="!loading" @click="onSummarize" class="regenerate-btn">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="regenerate-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182" /></svg>
-          重新生成
-        </button>
       </div>
 
       <!-- Tab: 字幕 -->
@@ -648,6 +700,16 @@ function downloadNotes() {
                 <option value="txt">TXT</option>
               </select>
             </div>
+            <button
+              v-if="subtitleSource === 'whisper'"
+              @click="handleRegenerateSubtitle"
+              :disabled="loading"
+              class="subtitle-download-btn"
+              title="重新语音识别"
+            >
+              <svg viewBox="0 0 20 20" fill="currentColor" class="download-icon"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/></svg>
+              重新识别
+            </button>
             <button
               class="subtitle-download-btn"
               :disabled="!hasSubtitleSegments"
@@ -685,6 +747,9 @@ function downloadNotes() {
               <svg v-else viewBox="0 0 20 20" fill="currentColor" class="toolbar-icon"><path d="M6 18L18 6M6 6l12 12" stroke="currentColor" stroke-width="2"/></svg>
               {{ isFullscreen ? '退出' : '全屏' }}
             </button>
+            <button @click="handleRegenerateMindmap" :disabled="loading" class="zoom-btn" title="重新生成思维导图">
+              <svg viewBox="0 0 20 20" fill="currentColor" class="toolbar-icon"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/></svg>
+            </button>
           </div>
           <div ref="mindmapContainer" class="mindmap-container" :class="{ 'mindmap-fullscreen': isFullscreen }">
             <svg ref="mindmapSvg" class="mindmap-svg" :style="isFullscreen ? 'height: 100%' : 'min-height: 500px'"></svg>
@@ -715,6 +780,9 @@ function downloadNotes() {
             <button @click="downloadNotes" class="notes-action-btn">
               <svg viewBox="0 0 20 20" fill="currentColor" class="toolbar-icon"><path d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z"/><path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"/></svg>
               下载 .md
+            </button>
+            <button @click="handleRegenerateNotes" :disabled="loading" class="notes-action-btn" title="重新生成笔记">
+              <svg viewBox="0 0 20 20" fill="currentColor" class="toolbar-icon"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/></svg>
             </button>
           </div>
           <div class="notes-content prose prose-invert prose-sm max-w-none" v-html="renderMarkdown(notesMarkdown)"></div>
@@ -786,6 +854,17 @@ function downloadNotes() {
 .streaming-indicator::before { content: ''; width: 6px; height: 6px; background: var(--accent-blue); border-radius: 50%; animation: pulse-dot 1s infinite; }
 @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 
+/* 初步摘要横幅 */
+.partial-banner {
+  display: flex; align-items: center; gap: 0.5rem;
+  margin-top: 0.75rem; padding: 0.5rem 0.75rem;
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.15);
+  border-radius: 8px;
+  font-size: 0.75rem; color: #FCD34D;
+}
+.partial-icon { width: 16px; height: 16px; flex-shrink: 0; }
+
 /* 流式文本 */
 .streaming-text { min-height: 60px; padding: 0.75rem 1rem; border: 1px solid var(--border); border-radius: 8px; background: rgba(255,255,255,0.02); }
 .streaming-text :deep(pre) { background: rgba(0,0,0,0.3); padding: 0.75rem 1rem; border-radius: 6px; overflow-x: auto; }
@@ -793,14 +872,27 @@ function downloadNotes() {
 .streaming-text :deep(a) { color: var(--accent-blue); }
 
 /* 子 Tab 栏 */
-.sub-tab-bar { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 1.25rem; }
-.sub-tab-btn { padding: 0.625rem 0.75rem; background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--text-muted); font-size: 0.8125rem; font-weight: 500; cursor: pointer; transition: all 0.15s; display: inline-flex; align-items: center; gap: 0.3rem; white-space: nowrap; }
+.sub-tab-bar { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 1.25rem; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+.sub-tab-bar::-webkit-scrollbar { display: none; }
+.sub-tab-btn { padding: 0.625rem 0.75rem; background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--text-muted); font-size: 0.8125rem; font-weight: 500; cursor: pointer; transition: all 0.15s; display: inline-flex; align-items: center; gap: 0.3rem; white-space: nowrap; flex-shrink: 0; }
 .sub-tab-btn:hover { color: var(--text-secondary); }
 .sub-tab-btn.active { color: var(--accent-blue); border-bottom-color: var(--accent-blue); }
 .sub-tab-btn:disabled { color: var(--border); cursor: not-allowed; }
 .sub-tab-icon { width: 14px; height: 14px; flex-shrink: 0; }
 
 .sub-tab-panel { min-height: 100px; }
+
+/* 统一可滚动内容面板 */
+.summary-scroll {
+  max-height: 500px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.12) transparent;
+  padding-right: 0.25rem;
+}
+.summary-scroll::-webkit-scrollbar { width: 6px; }
+.summary-scroll::-webkit-scrollbar-track { background: transparent; }
+.summary-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 3px; }
 
 /* 摘要 */
 .summary-section { padding: 0; margin-bottom: 1.25rem; }
@@ -958,37 +1050,87 @@ function downloadNotes() {
 .pro-btn { display: inline-flex; align-items: center; justify-content: center; gap: 0.375rem; padding: 0.5rem 1.25rem; background: linear-gradient(135deg, #8B5CF6 0%, #3B82F6 100%); border: none; border-radius: 8px; color: white; font-size: 0.875rem; font-weight: 600; cursor: pointer; align-self: flex-start; }
 .pro-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3); }
 
+.flashcards-section { margin-top: 1.25rem; padding-top: 1.25rem; border-top: 1px solid var(--border); }
+.flashcards-title { font-size: 0.9375rem; font-weight: 600; color: var(--text-primary); margin: 0 0 0.75rem 0; }
+.flashcards-grid { display: flex; flex-direction: column; gap: 0.625rem; }
+.flashcard-item { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: rgba(255,255,255,0.02); }
+.flashcard-question { padding: 0.625rem 0.875rem; font-size: 0.875rem; color: var(--text-primary); display: flex; gap: 0.5rem; align-items: flex-start; border-bottom: 1px solid rgba(255,255,255,0.05); background: rgba(59, 130, 246, 0.05); }
+.flashcard-answer { padding: 0.625rem 0.875rem; font-size: 0.8125rem; color: var(--text-secondary); display: flex; gap: 0.5rem; align-items: flex-start; }
+.flashcard-label { font-weight: 700; font-size: 0.75rem; color: var(--accent-blue); flex-shrink: 0; min-width: 1.25rem; }
+
 .regenerate-btn { display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.5rem 1rem; background: transparent; border: 1px solid var(--border); border-radius: 8px; color: var(--text-muted); font-size: 0.8125rem; cursor: pointer; margin-top: 0.5rem; }
 .regenerate-btn:hover { background: var(--bg-card-hover); border-color: var(--border-hover); color: var(--text-primary); }
 .regenerate-icon { width: 16px; height: 16px; }
 
-/* 渐进式阶段指示器 */
-.progressive-stages {
-  display: flex; flex-direction: column; gap: 0.5rem;
-  margin-bottom: 1rem; padding: 0.75rem 1rem;
-  background: rgba(255,255,255,0.03);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+/* 水平进度条 */
+.progress-bar-container {
+  margin-bottom: 1.25rem;
+  padding: 0.75rem 0.5rem;
 }
-.stage-item {
-  display: flex; align-items: center; gap: 0.5rem;
-  font-size: 0.8125rem; color: var(--text-muted);
-  transition: color 0.2s;
+.progress-steps {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
 }
-.stage-item.done { color: var(--text-secondary); }
-.stage-dot {
-  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
-  background: rgba(255,255,255,0.1);
+.progress-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  flex-shrink: 0;
 }
-.stage-item.done .stage-dot { background: var(--success); }
-.stage-label { flex: 1; }
-.stage-check { color: var(--success); font-size: 0.75rem; }
-.stage-spinner {
-  width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.1);
-  border-top-color: var(--accent-blue); border-radius: 50%;
-  animation: stage-spin 0.8s linear infinite;
+.step-circle {
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,0.05);
+  border: 2px solid var(--border);
+  transition: all 0.3s;
 }
-@keyframes stage-spin { to { transform: rotate(360deg); } }
+.progress-step.done .step-circle {
+  background: rgba(34, 197, 94, 0.15);
+  border-color: var(--success);
+}
+.progress-step.active .step-circle {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.3);
+}
+.step-check { color: var(--success); font-size: 0.7rem; line-height: 1; }
+.step-spinner {
+  width: 12px; height: 12px;
+  border: 2px solid rgba(255,255,255,0.15);
+  border-top-color: var(--accent-blue);
+  border-radius: 50%;
+  animation: step-spin 0.7s linear infinite;
+}
+@keyframes step-spin { to { transform: rotate(360deg); } }
+.step-label {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  transition: color 0.3s;
+}
+.progress-step.done .step-label { color: var(--text-secondary); }
+.progress-step.active .step-label { color: var(--accent-blue); font-weight: 500; }
+
+.progress-line {
+  width: 28px; height: 2px;
+  background: var(--border);
+  margin: 0 0.25rem;
+  margin-bottom: 1.25rem;
+  border-radius: 1px;
+  transition: background 0.5s;
+  flex-shrink: 0;
+}
+.progress-line.filled {
+  background: var(--success);
+}
+@media (max-width: 768px) {
+  .progress-line { width: 18px; }
+  .step-label { font-size: 0.6rem; }
+}
 
 /* 笔记 */
 .notes-section { display: flex; flex-direction: column; gap: 0.75rem; }

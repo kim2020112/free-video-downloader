@@ -13,7 +13,13 @@ export function useSummary() {
   const subtitleInfo = ref(null)
   const mindmapMarkdown = ref('')
   const notesMarkdown = ref('')
+  const notesSections = ref(null)
+  const flashcards = ref(null)
   const generationStage = ref('')
+  const chapters = ref(null)
+  const regeneratingMode = ref('')  // '' | 'summary' | 'mindmap' | 'notes' | 'subtitle'
+  const subtitleSource = ref('')
+  const isPartialSummary = ref(false)
 
   async function fetchSubtitleText(url, lang) {
     isFetchingSubtitle.value = true
@@ -40,15 +46,31 @@ export function useSummary() {
     }
   }
 
-  async function summarizeVideoStream(url, lang) {
+  async function summarizeVideoStream(url, lang, force = false, mode = 'full') {
     isSummarizing.value = true
+    regeneratingMode.value = mode === 'full' ? '' : mode
     summarizeError.value = ''
-    // 立即设置空结果让 Tab 栏出现，流式内容填入摘要 Tab
-    summaryResult.value = { summary: '', chapters: [], mindmap: { title: '', children: [] } }
-    streamingText.value = ''
+    if (mode === 'full') {
+      summaryResult.value = { summary: '', chapters: [], mindmap: { title: '', children: [] } }
+      streamingText.value = ''
+      notesMarkdown.value = ''
+      mindmapMarkdown.value = ''
+      notesSections.value = null
+      flashcards.value = null
+      chapters.value = null
+      isPartialSummary.value = false
+    } else if (mode === 'summary') {
+      streamingText.value = ''
+      flashcards.value = null
+    } else if (mode === 'mindmap') {
+      mindmapMarkdown.value = ''
+    } else if (mode === 'notes') {
+      notesMarkdown.value = ''
+      notesSections.value = null
+    }
 
     try {
-      const body = { url }
+      const body = { url, force, mode }
       if (lang) body.lang = lang
 
       const response = await fetch(`${API_BASE}/summarize/stream`, {
@@ -86,9 +108,13 @@ export function useSummary() {
                 break
               case 'result':
                 summaryResult.value = event.data
+                isPartialSummary.value = !!event.data.is_partial
                 break
               case 'progress':
                 generationStage.value = event.data.stage || event.data.message || ''
+                if (event.data.source) {
+                  subtitleSource.value = event.data.source
+                }
                 break
               case 'mindmap':
                 mindmapMarkdown.value = event.data.markdown
@@ -101,6 +127,20 @@ export function useSummary() {
               case 'notes':
                 notesMarkdown.value = event.data.markdown
                 generationStage.value = 'notes'
+                break
+              case 'notes_structured':
+                notesSections.value = event.data.sections
+                generationStage.value = 'notes'
+                break
+              case 'flashcards':
+                flashcards.value = event.data
+                break
+              case 'subtitle_text':
+                subtitleText.value = event.data.text
+                break
+              case 'chapters':
+                chapters.value = event.data.chapters
+                generationStage.value = 'chapters'
                 break
               case 'warn':
                 summarizeError.value = event.data.message
@@ -118,6 +158,7 @@ export function useSummary() {
       summarizeError.value = e.message || 'AI 总结失败'
     } finally {
       isSummarizing.value = false
+      regeneratingMode.value = ''
     }
   }
 
@@ -134,7 +175,13 @@ export function useSummary() {
     subtitleInfo.value = null
     mindmapMarkdown.value = ''
     notesMarkdown.value = ''
+    notesSections.value = null
+    flashcards.value = null
+    chapters.value = null
     generationStage.value = ''
+    regeneratingMode.value = ''
+    subtitleSource.value = ''
+    isPartialSummary.value = false
     isFetchingSubtitle.value = false
     subtitleError.value = ''
   }
@@ -150,7 +197,13 @@ export function useSummary() {
     subtitleInfo,
     mindmapMarkdown,
     notesMarkdown,
+    notesSections,
+    flashcards,
+    chapters,
     generationStage,
+    regeneratingMode,
+    subtitleSource,
+    isPartialSummary,
     fetchSubtitleText,
     summarizeVideoStream,
     summarizeVideo,

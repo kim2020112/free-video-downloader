@@ -18,10 +18,11 @@ from core.summarizer import (
 from core.ai_client import (
     stream_summarize, stream_chat, stream_generate_notes,
     generate_mindmap, correct_subtitle,
+    stream_chunk_summaries, _split_text,
 )
 from config import SUBTITLE_CORRECTION_ENABLED, WHISPER_MAX_DURATION
-from core.cache import get_cached, save_cache, get_whisper_cache, save_whisper_cache, get_video_info_cache, save_video_info_cache
-from core.whisper import transcribe_video, is_model_available
+from core.cache import get_cached, save_cache, delete_cache, delete_whisper_cache, get_whisper_cache, save_whisper_cache, get_video_info_cache, save_video_info_cache, video_fingerprint
+from core.whisper import transcribe_video_async, is_model_available
 
 from api.routes import extract_url, _download_subtitle_content, downloader
 from api.summary_routes import (
@@ -58,20 +59,31 @@ async def _sse_generator(sync_gen):
 
 # ──── 字幕获取 Pipeline ────
 
-async def _get_subtitle_text(url: str, info, lang: str = None) -> tuple[str, str, str]:
-    """标准化字幕获取：
+async def _get_subtitle_text(url: str, info, lang: str = None, fingerprint: str = None) -> tuple[str, str, str]:
+    """标准化字幕获取（DB 优先，减少重复 API 调用）：
        1. 平台 API（B站 CC / YouTube auto-captions）
        2. yt-dlp 原生字幕
-       3. Whisper fallback（预留）
+       3. Whisper fallback
 
     返回 (subtitle_text, source, language)
     """
-    # Pipeline 1: Bilibili CC 字幕 API
+    from database import get_subtitle_from_db, save_subtitle_to_db
+    platform = info.extractor or ""
+
+    # ── DB 缓存检查 ──
+    cached_sub = get_subtitle_from_db(url)
+    if cached_sub and len(cached_sub["full_text"].strip()) >= 50:
+        return cached_sub["full_text"], cached_sub["source"], cached_sub["language"]
+
+    # ── Pipeline 1: Bilibili CC 字幕 API ──
     bilibili_sub = extract_bilibili_subtitle(url)
     if bilibili_sub and bilibili_sub['has_subtitle']:
-        return bilibili_sub['full_text'], "bilibili_cc", bilibili_sub.get('language', 'zh')
+        text = bilibili_sub['full_text']
+        sub_lang = bilibili_sub.get('language', 'zh')
+        save_subtitle_to_db(url, "bilibili_cc", sub_lang, bilibili_sub['text'], info.title, platform)
+        return text, "bilibili_cc", sub_lang
 
-    # Pipeline 2: yt-dlp 原生字幕
+    # ── Pipeline 2: yt-dlp 原生字幕 ──
     if info.subtitles:
         selected = _select_subtitle_lang(info.subtitles, lang)
         if selected and selected.lang != 'danmaku':
@@ -85,27 +97,26 @@ async def _get_subtitle_text(url: str, info, lang: str = None) -> tuple[str, str
                     subtitle_text = clean_subtitle_text(raw_content, ext)
                 if subtitle_text and len(subtitle_text.strip()) >= 50:
                     source = "youtube_auto" if selected.is_auto else "ytdlp_native"
+                    save_subtitle_to_db(url, source, selected.lang, subtitle_text, info.title, platform)
                     return subtitle_text, source, selected.lang
             except Exception:
                 pass
 
-    # Pipeline 3: Whisper 转录（兜底）
+    # ── Pipeline 3: Whisper 转录（兜底） ──
     if is_model_available():
-        # 视频时长超过限制，跳过 Whisper（CPU 转录太慢）
         if info.duration and info.duration > WHISPER_MAX_DURATION:
             return None, "", ""
-        # 先查 Whisper 缓存，避免重复转录
-        cached_whisper = get_whisper_cache(url)
+        cached_whisper = get_whisper_cache(url, fingerprint=fingerprint)
         if cached_whisper and len(cached_whisper.strip()) >= 20:
+            save_subtitle_to_db(url, "whisper", lang or "auto", cached_whisper, info.title, platform)
             return cached_whisper, "whisper", lang or "auto"
 
         try:
             whisper_text = await asyncio.wait_for(
-                asyncio.get_event_loop().run_in_executor(None, transcribe_video, url, lang),
+                transcribe_video_async(url, lang),
                 timeout=600,
             )
             if whisper_text and len(whisper_text.strip()) >= 20:
-                # AI 校正 Whisper 转录文本
                 corrected = whisper_text
                 if SUBTITLE_CORRECTION_ENABLED:
                     try:
@@ -118,14 +129,14 @@ async def _get_subtitle_text(url: str, info, lang: str = None) -> tuple[str, str
                     except (asyncio.TimeoutError, Exception) as e:
                         print(f"[SubtitleCorrection] 校正失败，使用原始文本: {e}")
                         corrected = whisper_text
-                save_whisper_cache(url, corrected, lang or "auto", whisper_text)
+                save_whisper_cache(url, corrected, lang or "auto", whisper_text, fingerprint=fingerprint)
+                save_subtitle_to_db(url, "whisper", lang or "auto", corrected, info.title, platform)
                 return corrected, "whisper", lang or "auto"
         except asyncio.TimeoutError:
             pass
         except Exception:
             pass
 
-    # Pipeline 4: OCR 硬字幕（预留接口）
     return None, "", ""
 
 
@@ -137,7 +148,16 @@ async def summarize_stream(req: SummarizeRequest):
 
         # ── 缓存检查 ──
         cached = get_cached(url)
-        if cached and cached.get("result_json"):
+        if req.force:
+            if cached:
+                if req.mode == "full":
+                    delete_cache(url)
+                    cached = None
+                # 非 full 模式 force：只清除对应组件，保留其他缓存
+            elif req.mode != "full":
+                raise HTTPException(status_code=400, detail="尚无缓存，请先生成完整 AI 总结")
+
+        if cached and cached.get("result_json") and req.mode == "full" and not req.force:
             result_data = json.loads(cached["result_json"])
 
             def _replay():
@@ -160,38 +180,205 @@ async def summarize_stream(req: SummarizeRequest):
                 headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
             )
 
-        # ── 视频信息缓存预检（快速路径：已缓存的超长视频直接跳过） ──
-        cached_info = get_video_info_cache(url)
-        _long_video_msg = f"视频时长超过 {WHISPER_MAX_DURATION} 秒限制，不支持语音识别"
+        # ── 部分重新生成（mode != "full"）：从缓存取字幕，只跑指定组件 ──
+        if req.mode != "full":
+            # 字幕重新转录特殊处理：不需要已有缓存
+            if req.mode == "subtitle":
+                if not is_model_available():
+                    raise HTTPException(status_code=400, detail="Whisper 模型未就绪，无法转录")
 
-        if cached_info and cached_info.get("duration", 0) > WHISPER_MAX_DURATION:
-            desc = cached_info.get("description", "")
-            title = cached_info.get("title", "")
-            duration = cached_info.get("duration", 0)
-            if not desc or len(desc.strip()) < 20:
-                raise HTTPException(status_code=400, detail=f"{_long_video_msg}。该视频也没有简介，无法生成 AI 总结")
+                cached_info = get_video_info_cache(url)
+                fp = cached_info.get("fingerprint") if cached_info else None
+                cache_url = url
+                if cached_info:
+                    video_title = cached_info.get("title", "")
+                else:
+                    try:
+                        info = downloader.parse_info(url)
+                        fp = video_fingerprint(info.extractor, info.id) if info.extractor and info.id else None
+                        cache_url = info.webpage_url or url
+                        save_video_info_cache(cache_url, info, fingerprint=fp)
+                        video_title = info.title or ""
+                    except Exception:
+                        video_title = ""
 
-            def _gen_desc_fast():
-                yield ("warn", {"message": f"视频时长 {int(duration)} 秒超过 {WHISPER_MAX_DURATION} 秒限制，跳过语音识别"})
-                yield ("progress", {"stage": "summary_generating", "message": "正在基于视频简介生成总结..."})
-                result = summarize_from_description(title, desc)
-                inc_summarize_usage()
-                result["summary"] = f"⚠️ {_long_video_msg}，以下总结基于视频简介生成，仅供参考。\n\n" + result.get("summary", "")
-                yield ("result", result)
+                # 先删除旧 Whisper 缓存
+                delete_whisper_cache(cache_url, fingerprint=fp)
+
+                # 在 async 上下文中执行转录（不能在 sync generator 中用 await）
+                whisper_text = ""
+                whisper_error = ""
+                try:
+                    whisper_text = await asyncio.wait_for(
+                        transcribe_video_async(url, req.lang), timeout=600
+                    )
+                except Exception as e:
+                    whisper_error = str(e)
+
+                corrected = ""
+                if whisper_text and len(whisper_text.strip()) >= 20:
+                    corrected = whisper_text
+                    if SUBTITLE_CORRECTION_ENABLED:
+                        try:
+                            corrected = await asyncio.wait_for(
+                                asyncio.get_event_loop().run_in_executor(
+                                    None, correct_subtitle, whisper_text, video_title, ""
+                                ),
+                                timeout=60,
+                            )
+                        except Exception:
+                            corrected = whisper_text
+                    save_whisper_cache(cache_url, corrected, req.lang or "auto", whisper_text, fingerprint=fp)
+                    if cached and cached.get("result_json"):
+                        save_cache(cache_url, video_title, corrected, "whisper", cached["result_json"], fingerprint=fp)
+
+                def _gen_subtitle():
+                    yield ("progress", {"stage": "subtitle_transcribing", "message": "正在用 Whisper 重新语音识别..."})
+                    if whisper_error:
+                        yield ("error", {"message": f"Whisper 转录失败: {whisper_error}"})
+                        yield ("done", {})
+                        return
+                    if not whisper_text or len(whisper_text.strip()) < 20:
+                        yield ("error", {"message": "Whisper 转录结果为空或过短"})
+                        yield ("done", {})
+                        return
+                    yield ("progress", {"stage": "subtitle_loaded", "source": "whisper", "lang": req.lang or "auto", "message": "语音识别已完成，字幕已更新"})
+                    yield ("subtitle_text", {"text": corrected})
+                    yield ("done", {})
+
+                return StreamingResponse(
+                    _sse_generator(_gen_subtitle()),
+                    media_type="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+                )
+
+            if not cached or not cached.get("subtitle_text"):
+                raise HTTPException(status_code=400, detail="尚无 AI 分析缓存，请先生成完整总结")
+            subtitle_text = cached["subtitle_text"]
+            video_title = cached.get("video_title", "")
+            sub_source = "cache"
+            sub_lang = ""
+            cache_url = url
+            fp = None
+            # 从缓存用 info
+            cached_info = get_video_info_cache(url)
+            if cached_info:
+                video_title = cached_info.get("title", video_title) or video_title
+                fp = cached_info.get("fingerprint")
+            else:
+                # 尝试解析获取标题
+                try:
+                    info = downloader.parse_info(url)
+                    cache_url = info.webpage_url or url
+                    fp = video_fingerprint(info.extractor, info.id) if info.extractor and info.id else None
+                    save_video_info_cache(cache_url, info, fingerprint=fp)
+                    video_title = info.title or video_title
+                except Exception:
+                    pass
+
+            old_result = json.loads(cached["result_json"]) if cached.get("result_json") else {}
+
+            def _gen_partial():
+                if req.mode == "summary":
+                    yield ("progress", {"stage": "summary_generating", "message": "正在重新生成 AI 摘要..."})
+                    result_data = {}
+                    for event_type, data in stream_summarize(subtitle_text, video_title):
+                        yield (event_type, data)
+                        if event_type == "result":
+                            result_data = data
+                    inc_summarize_usage()
+                    merged = json.dumps({**old_result, "result": result_data}, ensure_ascii=False)
+
+                elif req.mode == "mindmap":
+                    yield ("progress", {"stage": "mindmap_generating", "message": "正在重新生成思维导图..."})
+                    mindmap_md = generate_mindmap(subtitle_text, video_title)
+                    yield ("mindmap", {"markdown": mindmap_md})
+                    merged = json.dumps({**old_result, "mindmap_markdown": mindmap_md}, ensure_ascii=False)
+
+                elif req.mode == "notes":
+                    yield ("progress", {"stage": "notes_generating", "message": "正在重新生成学习笔记..."})
+                    notes_full = ""
+                    for event_type, data in stream_generate_notes(subtitle_text, video_title):
+                        yield (event_type, data)
+                        if event_type == "notes_text":
+                            notes_full += data.get("text", "")
+                    merged = json.dumps({**old_result, "notes": notes_full}, ensure_ascii=False)
+                else:
+                    yield ("error", {"message": f"未知模式: {req.mode}"})
+                    yield ("done", {})
+                    return
+
+                save_cache(cache_url, video_title, subtitle_text, sub_source, merged, fingerprint=fp)
                 yield ("done", {})
 
             return StreamingResponse(
-                _sse_generator(_gen_desc_fast()),
+                _sse_generator(_gen_partial()),
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
             )
 
+        # ── 视频信息缓存预检（快速路径：已缓存的超长视频直接跳过 Whisper） ──
+        cached_info = get_video_info_cache(url)
+        _long_video_msg = f"视频时长超过 {WHISPER_MAX_DURATION} 秒限制，不支持语音识别"
+
+        if cached_info and cached_info.get("duration", 0) > WHISPER_MAX_DURATION:
+            # B站视频可能有 CC 字幕（独立于 yt-dlp），先尝试获取
+            bilibili_sub = extract_bilibili_subtitle(url)
+            if bilibili_sub and bilibili_sub.get('has_subtitle'):
+                pass  # 有 B站 CC 字幕，跳过快速路径，走正常 AI 管线
+            else:
+                desc = cached_info.get("description", "")
+                title = cached_info.get("title", "")
+                duration = cached_info.get("duration", 0)
+                if not desc or len(desc.strip()) < 20:
+                    raise HTTPException(status_code=400, detail=f"{_long_video_msg}。该视频也没有简介，无法生成 AI 总结")
+
+                def _gen_desc_fast():
+                    yield ("warn", {"message": f"视频时长 {int(duration)} 秒超过 {WHISPER_MAX_DURATION} 秒限制，跳过语音识别"})
+                    yield ("progress", {"stage": "summary_generating", "message": "正在基于视频简介生成总结..."})
+                    result = summarize_from_description(title, desc)
+                    inc_summarize_usage()
+                    result["summary"] = f"⚠️ {_long_video_msg}，以下总结基于视频简介生成，仅供参考。\n\n" + result.get("summary", "")
+                    yield ("result", result)
+                    yield ("done", {})
+
+                return StreamingResponse(
+                    _sse_generator(_gen_desc_fast()),
+                    media_type="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+                )
+
         # ── 解析视频信息 ──
         info = downloader.parse_info(url)
-        save_video_info_cache(url, info)
+        fp = video_fingerprint(info.extractor, info.id) if info.extractor and info.id else None
+        canonical_url = info.webpage_url or url
+        save_video_info_cache(canonical_url, info, fingerprint=fp)
+
+        # ── 二次缓存检查（同视频不同 URL 变体，按指纹命中） ──
+        if not cached and fp:
+            cached = get_cached(canonical_url, fingerprint=fp)
+            if cached and cached.get("result_json") and req.mode == "full" and not req.force:
+                result_data = json.loads(cached["result_json"])
+                def _replay_fp():
+                    yield ("progress", {"stage": "cache_hit", "message": "已有学习记录，直接加载"})
+                    result = result_data.get("result", {})
+                    if result:
+                        yield ("result", result)
+                    if result_data.get("mindmap_markdown"):
+                        yield ("mindmap", {"markdown": result_data["mindmap_markdown"]})
+                    if result_data.get("notes"):
+                        yield ("notes", {"markdown": result_data["notes"]})
+                    if result_data.get("flashcards"):
+                        yield ("flashcards", result_data["flashcards"])
+                    yield ("done", {})
+                return StreamingResponse(
+                    _sse_generator(_replay_fp()),
+                    media_type="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+                )
 
         # ── 字幕获取（在 async 上下文中执行） ──
-        subtitle_text, sub_source, sub_lang = await _get_subtitle_text(url, info, req.lang)
+        subtitle_text, sub_source, sub_lang = await _get_subtitle_text(canonical_url, info, req.lang, fingerprint=fp)
 
         # ── 无字幕降级 ──
         if not subtitle_text:
@@ -218,6 +405,20 @@ async def summarize_stream(req: SummarizeRequest):
                 headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
             )
 
+        # ── 章节信息拼入字幕上下文 ──
+        chapters = None
+        if hasattr(info, 'chapters') and info.chapters:
+            chapters = [{"start_time": ch.start_time, "end_time": ch.end_time, "title": ch.title} for ch in info.chapters]
+        chapter_context = ""
+        if chapters:
+            chapter_lines = ["\n\n## 视频章节信息\n"]
+            for ch in chapters:
+                mm = int(ch["start_time"] // 60)
+                ss = int(ch["start_time"] % 60)
+                chapter_lines.append(f"- [{mm:02d}:{ss:02d}] {ch['title']}")
+            chapter_context = "\n".join(chapter_lines)
+            subtitle_text = subtitle_text + chapter_context
+
         # ── 正常 AI 流水线 ──
         def _gen():
             source_label = {
@@ -234,29 +435,72 @@ async def summarize_stream(req: SummarizeRequest):
                 "message": f"字幕就绪（{source_label}），开始 AI 分析...",
             })
 
-            # 1. AI 摘要（流式）
-            yield ("progress", {"stage": "summary_generating", "message": "正在生成 AI 摘要..."})
-            has_error = False
-            result_data = {}
-            for event_type, data in stream_summarize(subtitle_text, info.title):
-                yield (event_type, data)
-                if event_type == "error":
-                    has_error = True
-                    break
-                if event_type == "result":
-                    result_data = data
+            if chapters:
+                yield ("chapters", {"chapters": chapters})
 
-            if has_error:
-                yield ("done", {})
-                return
+            # 1. AI 摘要（流式）— 长视频首片优先
+            chunks = _split_text(subtitle_text)
 
-            inc_summarize_usage()
+            if len(chunks) > 1:
+                result_data = {}
+                subtitle_for_rest = subtitle_text
+
+                for cevt, cdata in stream_chunk_summaries(subtitle_text, info.title):
+                    if cevt == "first_chunk_ready":
+                        yield ("progress", {
+                            "stage": "summary_initial",
+                            "message": f"基于视频前段内容（约{100//cdata['total']}%），生成初步摘要...",
+                        })
+                        for sevt, sdata in stream_summarize(cdata["text"], info.title):
+                            if sevt == "error":
+                                yield ("done", {})
+                                return
+                            if sevt == "result":
+                                sdata["is_partial"] = True
+                                result_data = sdata
+                            yield (sevt, sdata)
+
+                    elif cevt == "chunk_progress":
+                        yield ("progress", {
+                            "stage": "chunk_progress",
+                            "message": f"字幕片段处理中 ({cdata['index']+1}/{cdata['total']})...",
+                        })
+
+                    elif cevt == "all_chunks_ready":
+                        subtitle_for_rest = cdata["text"]
+                        yield ("progress", {
+                            "stage": "summary_final",
+                            "message": "正在基于完整字幕生成全面摘要...",
+                        })
+                        for sevt, sdata in stream_summarize(cdata["text"], info.title):
+                            if sevt == "error":
+                                yield ("done", {})
+                                return
+                            if sevt == "result":
+                                sdata["is_partial"] = False
+                                result_data = sdata
+                            yield (sevt, sdata)
+
+                inc_summarize_usage()
+            else:
+                yield ("progress", {"stage": "summary_generating", "message": "正在生成 AI 摘要..."})
+                result_data = {}
+                for event_type, data in stream_summarize(subtitle_text, info.title):
+                    if event_type == "error":
+                        yield ("done", {})
+                        return
+                    if event_type == "result":
+                        result_data = data
+                    yield (event_type, data)
+
+                inc_summarize_usage()
+                subtitle_for_rest = subtitle_text
 
             # 2. 思维导图
             yield ("progress", {"stage": "mindmap_generating", "message": "正在构建思维导图..."})
             mindmap_md = ""
             try:
-                mindmap_md = generate_mindmap(subtitle_text, info.title)
+                mindmap_md = generate_mindmap(subtitle_for_rest, info.title)
                 yield ("mindmap", {"markdown": mindmap_md})
             except Exception as e:
                 yield ("warn", {"message": f"思维导图生成失败: {str(e)}"})
@@ -265,7 +509,7 @@ async def summarize_stream(req: SummarizeRequest):
             yield ("progress", {"stage": "notes_generating", "message": "正在生成学习笔记..."})
             notes_full = ""
             try:
-                for event_type, data in stream_generate_notes(subtitle_text, info.title):
+                for event_type, data in stream_generate_notes(subtitle_for_rest, info.title):
                     yield (event_type, data)
                     if event_type == "notes_text":
                         notes_full += data.get("text", "")
@@ -278,7 +522,7 @@ async def summarize_stream(req: SummarizeRequest):
                 "mindmap_markdown": mindmap_md,
                 "notes": notes_full,
             }, ensure_ascii=False)
-            save_cache(url, info.title, subtitle_text, sub_source, save_cache_json)
+            save_cache(canonical_url, info.title, subtitle_text, sub_source, save_cache_json, fingerprint=fp)
 
             yield ("done", {})
 

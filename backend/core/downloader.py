@@ -6,7 +6,7 @@ import tempfile
 from typing import Optional, Callable
 from asyncio import Queue
 
-from .models import VideoInfo, FormatOption, ProgressData, VideoPart, SubtitleTrack
+from .models import VideoInfo, FormatOption, ProgressData, VideoPart, VideoChapter, SubtitleTrack
 
 
 def _is_bilibili(url: str) -> bool:
@@ -416,6 +416,16 @@ class VideoDownloader:
                         p.filesize = int(bytes_per_sec * p.duration)
                         p.filesize_str = _format_filesize(p.filesize)
 
+        # 提取章节信息（YouTube 等平台的视频章节标记）
+        chapters = []
+        raw_chapters = info.get('chapters') or []
+        for ch in raw_chapters:
+            chapters.append(VideoChapter(
+                start_time=ch.get('start_time', 0),
+                end_time=ch.get('end_time', 0),
+                title=ch.get('title', '') or '',
+            ))
+
         # 提取字幕信息
         subtitles = []
         _pref_ext = ('srt', 'vtt', 'json3', 'srv1', 'srv2', 'srv3')
@@ -452,6 +462,7 @@ class VideoDownloader:
         return VideoInfo(
             title=title,
             webpage_url=info.get('webpage_url', url),
+            id=info.get('id'),
             duration=video_duration,
             duration_string=info.get('duration_string'),
             thumbnail=info.get('thumbnail'),
@@ -462,6 +473,7 @@ class VideoDownloader:
             extractor=info.get('extractor'),
             formats=formats,
             parts=parts,
+            chapters=chapters,
             subtitles=subtitles,
         )
 

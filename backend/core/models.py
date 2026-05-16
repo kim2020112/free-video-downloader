@@ -48,9 +48,16 @@ class VideoPart(BaseModel):
     filesize_str: Optional[str] = None
 
 
+class VideoChapter(BaseModel):
+    start_time: float
+    end_time: float
+    title: str
+
+
 class VideoInfo(BaseModel):
     title: str
     webpage_url: str
+    id: Optional[str] = None
     duration: Optional[float] = None   # 保留浮点，前端展示时取整
     duration_string: Optional[str] = None
     thumbnail: Optional[str] = None
@@ -61,6 +68,7 @@ class VideoInfo(BaseModel):
     extractor: Optional[str] = None
     formats: list[FormatOption] = []
     parts: list[VideoPart] = []
+    chapters: list[VideoChapter] = []
     subtitles: list[SubtitleTrack] = []
 
     @field_validator('view_count', mode='before')

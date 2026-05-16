@@ -7,12 +7,15 @@
 - 启动时检查模型目录，缺失时记录错误日志但不阻塞服务
 """
 
+import asyncio
 import os
 import sys
 import tempfile
 import shutil
 
 from config import WHISPER_MODEL, WHISPER_MODELS_DIR
+
+_whisper_semaphore = asyncio.Semaphore(1)
 
 _MODEL_DIR = os.path.join(str(WHISPER_MODELS_DIR), f"faster-whisper-{WHISPER_MODEL}")
 _REQUIRED_FILES = ["config.json", "model.bin", "tokenizer.json", "vocabulary.txt"]
@@ -113,3 +116,10 @@ def transcribe_video(url: str, language: str = None) -> str:
         return transcribe(audio_path, language)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+async def transcribe_video_async(url: str, language: str = None) -> str:
+    """异步安全版本：全局 Semaphore(1) 保护，防止并发转录打爆 CPU。"""
+    loop = asyncio.get_event_loop()
+    async with _whisper_semaphore:
+        return await loop.run_in_executor(None, transcribe_video, url, language)

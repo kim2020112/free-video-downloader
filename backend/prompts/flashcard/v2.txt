@@ -1,0 +1,25 @@
+你是一个学习卡片生成专家。请根据以下视频内容总结，生成 5-8 个高质量的学习闪卡（问答对）。
+
+视频标题：{video_title}
+
+内容总结：
+---
+{content_summary}
+---
+
+请输出严格的 JSON 格式（不要用代码块包裹）：
+
+{{
+  "cards": [
+    {{"question": "问题1", "answer": "答案1", "difficulty": "easy"}},
+    {{"question": "问题2", "answer": "答案2", "difficulty": "medium"}},
+    {{"question": "问题3", "answer": "答案3", "difficulty": "hard"}}
+  ]
+}}
+
+要求：
+1. 直接输出 JSON，不要用 ```json 代码块包裹
+2. 问题覆盖视频的核心知识点
+3. difficulty 分为 easy（基础概念）、medium（理解应用）、hard（深入原理）
+4. 答案简洁准确，50-150字
+5. 中文输出

@@ -86,3 +86,59 @@ def init_db():
     with get_db() as conn:
         conn.executescript(_SCHEMA)
     print(f"[数据库] 初始化完成: {DB_PATH}")
+
+
+# ──── 字幕持久化查询/写入（供 summarize 和 subtitle 端点复用） ────
+
+def get_or_create_video(url: str, title: str = "", platform: str = "") -> int:
+    """获取或创建 video 记录，返回 video_id。"""
+    with get_db() as conn:
+        existing = conn.execute("SELECT id FROM videos WHERE url = ?", (url,)).fetchone()
+        if existing:
+            return existing["id"]
+        cursor = conn.execute(
+            "INSERT INTO videos (url, title, platform) VALUES (?, ?, ?)",
+            (url, title, platform),
+        )
+        return cursor.lastrowid
+
+
+def get_subtitle_from_db(url: str) -> dict | None:
+    """从 subtitles 表查询已缓存的字幕文本。返回 {full_text, source, language} 或 None。"""
+    with get_db() as conn:
+        row = conn.execute("""
+            SELECT s.full_text, s.source, s.language
+            FROM subtitles s
+            JOIN videos v ON s.video_id = v.id
+            WHERE v.url = ?
+            ORDER BY s.created_at DESC
+            LIMIT 1
+        """, (url,)).fetchone()
+    if not row:
+        return None
+    return {
+        "full_text": row["full_text"],
+        "source": row["source"],
+        "language": row["language"],
+    }
+
+
+def save_subtitle_to_db(url: str, source: str, language: str, full_text: str, title: str = "", platform: str = ""):
+    """将字幕文本持久化到 subtitles 表。覆盖同 URL 的旧字幕。"""
+    with get_db() as conn:
+        # 确保 video 记录存在
+        existing = conn.execute("SELECT id FROM videos WHERE url = ?", (url,)).fetchone()
+        if existing:
+            video_id = existing["id"]
+        else:
+            cursor = conn.execute(
+                "INSERT INTO videos (url, title, platform) VALUES (?, ?, ?)",
+                (url, title, platform),
+            )
+            video_id = cursor.lastrowid
+        # 先删除该 video 的旧字幕，再插入
+        conn.execute("DELETE FROM subtitles WHERE video_id = ?", (video_id,))
+        conn.execute(
+            "INSERT INTO subtitles (video_id, source, language, full_text) VALUES (?, ?, ?, ?)",
+            (video_id, source, language, full_text),
+        )

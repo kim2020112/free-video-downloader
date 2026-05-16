@@ -133,7 +133,11 @@ sequenceDiagram
 URL → 查 ai_cache (命中→SSE重放)
     → 查 video_info_cache (超长视频→即时拒)
     → parse_info() → 字幕获取 pipeline
-    → 有字幕: AI摘要(流式) → 思维导图 → 学习笔记(流式) → 持久化
+    → 有字幕:
+        → 字幕>60000字符? 
+          YES → 分片 → 首片优先（初步摘要流式~15s）→ 逐片进度 → 完整摘要流式覆盖
+          NO  → AI摘要(流式)
+        → 思维导图 → 学习笔记(流式) → 持久化
     → 无字幕: 基于视频简介降级总结 / 返回400
 ```
 
@@ -203,17 +207,19 @@ data: {"type": "done", "data": {}}
 
 | 事件 | 说明 |
 |------|------|
-| `progress` | 进度通知（字幕加载完成、Whisper 转录状态等） |
+| `progress` | 进度通知。stage: `subtitle_loaded` / `summary_initial` / `chunk_progress` / `summary_final` / `summary_generating` / `mindmap_generating` / `notes_generating` 等 |
 | `cache_hit` | 命中 AI 缓存，直接重放 |
 | `thinking_start` / `thinking` / `thinking_end` | 思考模型推理过程 |
 | `text_start` / `text` | AI 摘要流式文本生成 |
 | `notes_text` | 学习笔记流式文本生成（逐 token） |
 | `flashcard_text` | 学习卡片流式文本生成（逐 token） |
 | `mindmap` | 思维导图 Markdown（一次性） |
-| `result` | 最终结构化结果 |
+| `result` | 最终结构化结果。长视频首次为初步摘要（`is_partial: true`），第二次为完整摘要（`is_partial: false`） |
 | `warn` | 警告信息（无字幕降级、Whisper 跳过等） |
 | `error` | 错误信息 |
 | `done` | 流结束 |
+
+**长视频两阶段摘要（Chunk Summary 首片优先）**：字幕 >60000 字符时触发分片。`stream_chunk_summaries()` 首片用详细提示词（200-300 字+核心概念），后续片精简（100-150 字）。首片完成后立即流式输出初步摘要，用户约 15s 即可阅读内容；全部片完成后输出完整摘要覆盖。思维导图和笔记复用合并后的摘要文本，总计 N+4 次 API 调用（vs 旧版 3N+3 次）。
 
 实现原理：`_sse_generator` 使用 `asyncio.Queue` + `loop.call_soon_threadsafe` 实现真正的实时流式传输，每生成一个 token 即推送至客户端，不再缓冲。
 
@@ -323,6 +329,7 @@ App.vue
 | 平台兼容层 | monkey-patch yt-dlp 提取器 | 不修改 yt-dlp 源码，升级安全；对业务代码透明 |
 | 分P合并 | 逐P独立子目录下载 + ffmpeg concat | `concat_playlist='always'` 同名覆盖问题；手动合并更可靠 |
 | AI 流式输出 | `asyncio.Queue` + `call_soon_threadsafe` | 跨线程实时推送，每 token 即时送达；避免 `list()` 缓冲所有数据后再发送 |
+| Chunk Summary 首片优先 | `stream_chunk_summaries()` 生成器，两阶段摘要 | 长视频首片完成即流式输出初步摘要（~15s），用户无需等待全部分片；完整摘要随后覆盖 |
 | 语音转录 | Faster-Whisper small (CPU/int8) + local_files_only | 本地推理无需 GPU/网络；仅用于无字幕视频兜底；限制 120s 内视频 |
 | 字幕校正 | AI 后处理（temperature=0.1）| 利用视频元数据修正 Whisper 专有名词、同音错字；失败降级到原始文本 |
 | 视频信息缓存 | SQLite video_info_cache 表 | 避免同一视频重复调用 yt-dlp 解析（单次 20s+）；超长视频即时拦截 |

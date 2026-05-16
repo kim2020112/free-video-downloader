@@ -144,7 +144,8 @@ mkdir -p backend/data/whisper_models/faster-whisper-small
 `core/ai_client.py`（统一 AI 客户端）：
 - `_load_prompt(name)` 从 `prompts/{name}/v{PROMPT_VERSION}.txt` 加载模板
 - `_parse_json_response(content)` 从 AI 响应提取 JSON（支持 ` ```json ``` ` 包裹和裸 JSON）
-- `_chunk_summarize(subtitle_text, title)` 长视频分片 pipeline（>60000 字符触发）
+- `_chunk_summarize(subtitle_text, title)` 长视频分片 pipeline（>60000 字符触发），阻塞式返回合并摘要文本
+- `stream_chunk_summaries(subtitle_text, title)` 长视频分片**生成器**，首片优先 yield。首片用详细提示词（200-300 字+核心概念，max_tokens=1500），后续片精简（100-150 字，max_tokens=600）。yield 事件：`first_chunk_ready` → `chunk_progress`（每片）→ `all_chunks_ready`
 - 流式 API 使用 `client.messages.stream()`，yield `(event_type, data)` tuple
 - 非流式 API 返回 dict（结构化 JSON 解析后）
 - `_extract_text(response)` 兼容思考模型（`ThinkingBlock` + `TextBlock`）和非思考模型
@@ -168,7 +169,9 @@ mkdir -p backend/data/whisper_models/faster-whisper-small
 - `_get_subtitle_text()` 标准化字幕 pipeline：B 站 CC API → yt-dlp 原生 → Whisper + AI 校正
 - 视频时长预检：先查 `video_info_cache`，超长视频直接拦截（跳过慢速 yt-dlp 解析）
 - 缓存优先：`get_cached()` 命中 → SSE 重放，不调用 AI
-- 进度阶段：`subtitle_loaded` → `summary_generating` → `mindmap_generating` → `notes_generating`
+- **长视频两阶段摘要**：`_split_text()` >60000 字符触发分片 → `stream_chunk_summaries()` 首片优先 → `first_chunk_ready` 阶段流式输出初步摘要（`is_partial: true`）→ `chunk_progress` 逐片进度 → `all_chunks_ready` 阶段流式输出完整摘要（`is_partial: false`）覆盖
+- 进度阶段：`subtitle_loaded` → `summary_initial` / `chunk_progress` / `summary_final`（长视频）或 `summary_generating`（短视频）→ `mindmap_generating` → `notes_generating`
+- 思维导图和笔记复用合并后的摘要文本，避免重复分片（总计 N+4 次 API 调用 vs 旧版 3N+3 次）
 - 流水线完成后 `save_cache()` + `save_video_info_cache()` 持久化
 - `_sse_generator` 使用 `asyncio.Queue` + `loop.call_soon_threadsafe` 跨线程实时流式
 

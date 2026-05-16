@@ -35,15 +35,17 @@ const activeTab = ref('summary')
 const showDownloadSection = ref(false)
 const showSubtitles = ref(false)
 const showFullDescription = ref(false)
+const showChapters = ref(false)
 const showHistory = ref(false)
 const historyList = ref([])
+const deletingHistoryId = ref(null)
 
 async function fetchHistory() {
   try {
-    const res = await fetch('/api/videos?limit=20')
+    const res = await fetch('/api/videos?limit=50')
     if (res.ok) {
       const data = await res.json()
-      historyList.value = data.videos || []
+      historyList.value = data.items || []
     }
   } catch {}
 }
@@ -53,10 +55,25 @@ function toggleHistory() {
   if (showHistory.value) fetchHistory()
 }
 
-function selectHistory(item) {
+async function selectHistory(item) {
   url.value = item.url
   showHistory.value = false
-  handleParse()
+  await handleParse()
+  // 解析完成后自动触发AI总结（恢复缓存的AI结果）
+  if (videoInfo.value && !error.value) {
+    handleSummarize(false)
+  }
+}
+
+async function deleteHistory(item, event) {
+  event.stopPropagation()
+  try {
+    deletingHistoryId.value = item.id
+    await fetch(`/api/videos/${item.id}`, { method: 'DELETE' })
+    historyList.value = historyList.value.filter(h => h.id !== item.id)
+  } catch {} finally {
+    deletingHistoryId.value = null
+  }
 }
 
 const {
@@ -70,7 +87,12 @@ const {
   subtitleInfo,
   mindmapMarkdown,
   notesMarkdown,
+  notesSections,
+  flashcards,
   generationStage,
+  regeneratingMode,
+  subtitleSource,
+  isPartialSummary,
   fetchSubtitleText,
   summarizeVideoStream,
   summarizeVideo,
@@ -85,10 +107,38 @@ const {
   resetChat,
 } = useChat()
 
-async function handleSummarize() {
+async function handleSummarize(force = false) {
   if (!videoInfo.value) return
   try {
-    await summarizeVideoStream(videoInfo.value.webpage_url)
+    await summarizeVideoStream(videoInfo.value.webpage_url, null, force, 'full')
+  } catch (e) { /* handled by useSummary */ }
+}
+
+async function handleRegenerateSummary() {
+  if (!videoInfo.value) return
+  try {
+    await summarizeVideoStream(videoInfo.value.webpage_url, null, true, 'summary')
+  } catch (e) { /* handled by useSummary */ }
+}
+
+async function handleRegenerateMindmap() {
+  if (!videoInfo.value) return
+  try {
+    await summarizeVideoStream(videoInfo.value.webpage_url, null, true, 'mindmap')
+  } catch (e) { /* handled by useSummary */ }
+}
+
+async function handleRegenerateNotes() {
+  if (!videoInfo.value) return
+  try {
+    await summarizeVideoStream(videoInfo.value.webpage_url, null, true, 'notes')
+  } catch (e) { /* handled by useSummary */ }
+}
+
+async function handleRegenerateSubtitle() {
+  if (!videoInfo.value) return
+  try {
+    await summarizeVideoStream(videoInfo.value.webpage_url, null, true, 'subtitle')
   } catch (e) { /* handled by useSummary */ }
 }
 
@@ -252,6 +302,7 @@ async function handleParse() {
   resetChat()
   reset()
   showSubtitles.value = false
+  showChapters.value = false
   showFullDescription.value = false
   try {
     await parseVideo(url.value.trim())
@@ -368,11 +419,20 @@ function formatTime(timestamp) {
           <div class="drawer-body">
             <div v-if="!historyList.length" class="drawer-empty">暂无历史记录</div>
             <div v-for="item in historyList" :key="item.id" class="drawer-item" @click="selectHistory(item)">
-              <img v-if="item.thumbnail_url" :src="item.thumbnail_url" class="drawer-thumb" />
+              <img v-if="item.thumbnail_url" :src="'/api/thumbnail?url=' + encodeURIComponent(item.thumbnail_url)" class="drawer-thumb" />
               <div class="drawer-item-info">
                 <span class="drawer-item-title">{{ item.title }}</span>
                 <span class="drawer-item-time">{{ item.platform }} · {{ item.created_at?.slice(0, 10) }}</span>
               </div>
+              <button
+                class="drawer-delete-btn"
+                :disabled="deletingHistoryId === item.id"
+                @click="deleteHistory(item, $event)"
+                :title="'删除'"
+              >
+                <svg v-if="deletingHistoryId !== item.id" viewBox="0 0 20 20" fill="currentColor" class="drawer-delete-icon"><path fill-rule="evenodd" d="M8.75 2.5A1.75 1.75 0 006 4.25H3.75a.75.75 0 000 1.5h.372l.94 10.838A2 2 0 007.045 18.5h5.91a2 2 0 001.984-1.912l.94-10.838h.371a.75.75 0 000-1.5H14A1.75 1.75 0 0011.25 2.5h-2.5zm3.098 3.5H8.152l.912 10.5h1.872l.912-10.5z" clip-rule="evenodd"/></svg>
+                <svg v-else class="drawer-delete-icon spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182" /></svg>
+              </button>
             </div>
           </div>
         </div>
@@ -417,6 +477,36 @@ function formatTime(timestamp) {
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
                 查看原视频
               </a>
+            </div>
+          </div>
+
+          <!-- Chapters -->
+          <div v-if="videoInfo.chapters && videoInfo.chapters.length" class="chapters-section">
+            <button
+              type="button"
+              class="chapters-collapse-toggle"
+              :aria-expanded="showChapters"
+              @click="showChapters = !showChapters"
+            >
+              <svg
+                class="subtitle-toggle-chevron"
+                :class="{ rotated: showChapters }"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+              >
+                <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
+              </svg>
+              <span class="subtitle-toggle-label">视频章节（{{ videoInfo.chapters.length }}）</span>
+            </button>
+            <div v-show="showChapters" class="chapters-list">
+              <div
+                v-for="(ch, i) in videoInfo.chapters"
+                :key="i"
+                class="chapter-row"
+              >
+                <span class="chapter-time">{{ formatDuration(ch.start_time) }}</span>
+                <span class="chapter-title">{{ ch.title }}</span>
+              </div>
             </div>
           </div>
 
@@ -650,6 +740,8 @@ function formatTime(timestamp) {
             <AiSummary
               :result="summaryResult"
               :loading="isSummarizing"
+              :regeneratingMode="regeneratingMode"
+              :subtitleSource="subtitleSource"
               :error="summarizeError"
               :streamingText="streamingText"
               :subtitleText="subtitleText"
@@ -659,11 +751,18 @@ function formatTime(timestamp) {
               :isChatStreaming="isChatStreaming"
               :chatError="chatError"
               :subtitleInfo="subtitleInfo"
+              :isPartialSummary="isPartialSummary"
               :videoTitle="videoInfo?.title || ''"
               :mindmapMarkdown="mindmapMarkdown"
               :notesMarkdown="notesMarkdown"
+              :notesSections="notesSections"
+              :flashcards="flashcards"
               :generationStage="generationStage"
               :onSummarize="handleSummarize"
+              :onRegenerateSummary="handleRegenerateSummary"
+              :onRegenerateMindmap="handleRegenerateMindmap"
+              :onRegenerateNotes="handleRegenerateNotes"
+              :onRegenerateSubtitle="handleRegenerateSubtitle"
               :onFetchSubtitle="handleFetchSubtitle"
               :onSendQuestion="handleSendQuestion"
             />
@@ -759,7 +858,11 @@ function formatTime(timestamp) {
   background: rgba(255, 255, 255, 0.03);
   border-radius: 10px;
   border: 1px solid var(--border);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
 }
+.tab-bar::-webkit-scrollbar { display: none; }
 
 .tab-button {
   flex: 1;
@@ -776,6 +879,7 @@ function formatTime(timestamp) {
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s;
+  white-space: nowrap;
 }
 
 .tab-button:hover { color: var(--text-secondary); background: rgba(255, 255, 255, 0.05); }
@@ -1057,6 +1161,64 @@ function formatTime(timestamp) {
 .format-detail-item {
   font-size: 0.75rem;
   color: var(--text-muted);
+}
+
+.chapters-section {
+  margin-bottom: 1rem;
+}
+.chapters-collapse-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.625rem 0.875rem;
+  background: rgba(59, 130, 246, 0.05);
+  border: 1px solid rgba(59, 130, 246, 0.12);
+  border-radius: 10px;
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: left;
+}
+.chapters-collapse-toggle:hover {
+  background: rgba(59, 130, 246, 0.08);
+  border-color: rgba(59, 130, 246, 0.2);
+  color: var(--text-primary);
+}
+.chapters-list {
+  margin-top: 0.5rem;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.375rem;
+}
+.chapter-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.625rem;
+  border-radius: 7px;
+  transition: background 0.15s;
+}
+.chapter-row:hover {
+  background: var(--bg-card-hover);
+}
+.chapter-time {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--accent-blue);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  min-width: 3.5rem;
+}
+.chapter-title {
+  font-size: 0.8125rem;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .subtitle-section {
@@ -1734,6 +1896,24 @@ function formatTime(timestamp) {
 .drawer-item-info { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
 .drawer-item-title { font-size: 0.8125rem; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .drawer-item-time { font-size: 0.75rem; color: var(--text-muted); }
+.drawer-delete-btn {
+  flex-shrink: 0;
+  width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: all 0.15s;
+  align-self: center;
+}
+.drawer-item:hover .drawer-delete-btn { opacity: 1; }
+.drawer-delete-btn:hover { background: rgba(239, 68, 68, 0.15); color: #FCA5A5; }
+.drawer-delete-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.drawer-delete-icon { width: 14px; height: 14px; }
+.drawer-delete-icon.spinner { animation: spin 1s linear infinite; }
 
 .drawer-enter-active, .drawer-leave-active { transition: opacity 0.2s; }
 .drawer-enter-active .history-drawer, .drawer-leave-active .history-drawer { transition: transform 0.2s; }
