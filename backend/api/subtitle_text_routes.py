@@ -3,7 +3,8 @@
 import asyncio
 
 from fastapi import APIRouter, HTTPException, Query
-from core.summarizer import clean_subtitle_text, _clean_danmaku_xml, extract_bilibili_subtitle
+import re as _re
+from core.summarizer import clean_subtitle_text, _clean_danmaku_xml, extract_bilibili_subtitle, extract_bilibili_subtitle_by_cid
 from core.whisper import transcribe_video, is_model_available
 from core.cache import get_whisper_cache, save_whisper_cache, get_video_info_cache, save_video_info_cache, video_fingerprint
 from core.ai_client import correct_subtitle
@@ -47,8 +48,25 @@ async def get_subtitle_text(
                 "txt", True,
             )
 
-        # 1. 优先尝试 Bilibili CC 字幕 API
-        bilibili_sub = extract_bilibili_subtitle(url)
+        # 1. 优先尝试 Bilibili CC 字幕 API（多P视频按 cid 获取对应分P字幕）
+        bilibili_sub = None
+        if 'bilibili' in url.lower():
+            p_match = _re.search(r'[?&]p=(\d+)', url)
+            if p_match:
+                bvid_m = _re.search(r'(BV\w+)', url)
+                if bvid_m:
+                    try:
+                        from api.routes import downloader as _dl
+                        info = _dl.parse_info(url)
+                        parts = getattr(info, 'parts', []) or []
+                        p_index = int(p_match.group(1))
+                        part = next((p for p in parts if p.index == p_index), None)
+                        if part and part.cid:
+                            bilibili_sub = extract_bilibili_subtitle_by_cid(bvid_m.group(1), part.cid)
+                    except Exception:
+                        pass
+        if not bilibili_sub:
+            bilibili_sub = extract_bilibili_subtitle(url)
         if bilibili_sub and bilibili_sub['has_subtitle']:
             text = bilibili_sub['text']
             sub_lang = bilibili_sub['language']

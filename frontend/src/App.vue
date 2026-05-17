@@ -166,7 +166,11 @@ async function switchSummarizePart(partIndex) {
   if (partIndex === currentSummarizePart.value) return
   currentSummarizePart.value = partIndex
   activeTab.value = 'summary'
+  // 清除旧分P的字幕文本，避免显示上一分P的内容
+  subtitleText.value = ''
   await handleSummarize(false)
+  // 总结完成后自动获取当前分P的字幕
+  fetchSubtitleText(summarizeUrl.value).catch(() => {})
 }
 
 function handleSendQuestion(question) {

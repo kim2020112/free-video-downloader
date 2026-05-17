@@ -338,7 +338,19 @@ async def summarize_stream(req: SummarizeRequest):
 
         if cached_info and cached_info.get("duration", 0) > WHISPER_MAX_DURATION:
             # B站视频可能有 CC 字幕（独立于 yt-dlp），先尝试获取
-            bilibili_sub = extract_bilibili_subtitle(url)
+            bilibili_sub = None
+            if 'bilibili' in url.lower():
+                p_match_fp = re.search(r'[?&]p=(\d+)', url)
+                if p_match_fp:
+                    parts_fp = cached_info.get('parts', []) or []
+                    p_idx = int(p_match_fp.group(1))
+                    part_fp = next((p for p in parts_fp if p.get('index') == p_idx), None)
+                    if part_fp and part_fp.get('cid'):
+                        bvid_fp = re.search(r'(BV\w+)', url)
+                        if bvid_fp:
+                            bilibili_sub = extract_bilibili_subtitle_by_cid(bvid_fp.group(1), part_fp['cid'])
+            if not bilibili_sub:
+                bilibili_sub = extract_bilibili_subtitle(url)
             if bilibili_sub and bilibili_sub.get('has_subtitle'):
                 pass  # 有 B站 CC 字幕，跳过快速路径，走正常 AI 管线
             else:
