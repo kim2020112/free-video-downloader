@@ -8,6 +8,8 @@ import time
 from datetime import datetime, timezone, timedelta
 from config import DB_PATH
 
+_initialized = False
+
 
 def _url_hash(url: str) -> str:
     return hashlib.sha256(url.encode("utf-8")).hexdigest()
@@ -63,7 +65,15 @@ def _ensure_table():
         """)
 
 
-_ensure_table()
+def _init_cache():
+    """应用启动时一次性初始化所有缓存表。"""
+    global _initialized
+    if _initialized:
+        return
+    _ensure_table()
+    _ensure_whisper_table()
+    _ensure_video_info_table()
+    _initialized = True
 
 
 def get_cached(url: str, fingerprint: str = None) -> dict | None:
@@ -219,9 +229,6 @@ def _ensure_whisper_table():
             pass
 
 
-_ensure_whisper_table()
-
-
 def get_whisper_cache(url: str, fingerprint: str = None) -> str | None:
     """获取缓存的 Whisper 转录文本（校正后）。先指纹，再 URL。"""
     h = _url_hash(url)
@@ -279,9 +286,6 @@ def _ensure_video_info_table():
             conn.execute("ALTER TABLE video_info_cache ADD COLUMN fingerprint TEXT DEFAULT ''")
         except sqlite3.OperationalError:
             pass
-
-
-_ensure_video_info_table()
 
 
 def get_video_info_cache(url: str, fingerprint: str = None) -> dict | None:
@@ -672,3 +676,7 @@ def get_learning_stats() -> dict:
         "platform_distribution": platform_distribution,
         "recent_trend": recent_trend,
     }
+
+
+# 模块加载完成后一次性初始化所有缓存表
+_init_cache()

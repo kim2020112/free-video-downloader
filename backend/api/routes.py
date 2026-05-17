@@ -24,8 +24,8 @@ def _resolve_short_url(url: str) -> str:
     # b23.tv → bilibili.com
     if re.match(r'https?://b23\.tv/', url):
         path = '/' + url.split('b23.tv/', 1)[1]
+        conn = http.client.HTTPSConnection('b23.tv', timeout=10)
         try:
-            conn = http.client.HTTPSConnection('b23.tv', timeout=10)
             conn.request('GET', path, headers={
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             })
@@ -38,13 +38,15 @@ def _resolve_short_url(url: str) -> str:
                 return location
         except Exception:
             pass
+        finally:
+            conn.close()
         return url
 
     # v.douyin.com → douyin.com/video/{id}
     if re.match(r'https?://v\.douyin\.com/', url):
         path = '/' + url.split('v.douyin.com/', 1)[1]
+        conn = http.client.HTTPSConnection('v.douyin.com', timeout=10)
         try:
-            conn = http.client.HTTPSConnection('v.douyin.com', timeout=10)
             conn.request('GET', path, headers={
                 'User-Agent': 'Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/120.0.0.0 Mobile Safari/537.36',
             })
@@ -55,6 +57,8 @@ def _resolve_short_url(url: str) -> str:
                 return f'https://www.douyin.com/video/{vid.group(1)}'
         except Exception:
             pass
+        finally:
+            conn.close()
         return url
 
     # bilibili.com（无 www）→ www.bilibili.com，避免 yt-dlp 403
@@ -67,6 +71,31 @@ from core.downloader import VideoDownloader
 from core.models import ParseRequest, DownloadRequest, VideoInfo, DownloadTask, ProgressData, SubtitleTrack
 
 router = APIRouter()
+
+# CDN 域名 → 所属平台 Referer 映射（视频流代理 + 缩略图代理共用）
+_CDN_REFERER = {
+    'xhscdn.com':       'https://www.xiaohongshu.com/',
+    'hdslb.com':        'https://www.bilibili.com/',
+    'bilivideo.com':    'https://www.bilibili.com/',
+    'douyinvod.com':    'https://www.douyin.com/',
+    '365yg.com':        'https://www.douyin.com/',
+    'amemv.com':        'https://www.douyin.com/',
+    'pstatp.com':       'https://www.douyin.com/',
+    'ixigua.com':       'https://www.ixigua.com/',
+    'ytimg.com':        'https://www.youtube.com/',
+    'googlevideo.com':  'https://www.youtube.com/',
+}
+
+
+def _get_cdn_referer(url: str) -> str | None:
+    """根据 URL 域名匹配 CDN Referer。"""
+    from urllib.parse import urlparse
+    netloc = urlparse(url).netloc
+    return next(
+        (v for k, v in _CDN_REFERER.items() if netloc.endswith(k)),
+        None,
+    )
+
 
 # 全局下载器实例
 downloader = VideoDownloader(output_dir=os.path.join(os.path.dirname(os.path.dirname(__file__)), "downloads"))
@@ -135,8 +164,10 @@ async def proxy_video_stream(url: str, request: Request):
     """代理视频流请求，解决 Bilibili 等平台 CDN 的 Referer 限制。"""
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Referer": "https://www.bilibili.com/",
     }
+    referer = _get_cdn_referer(url)
+    if referer:
+        headers["Referer"] = referer
     # 转发浏览器的 Range 请求（视频 seek 需要）
     range_header = request.headers.get("range")
     if range_header:
@@ -177,30 +208,10 @@ async def proxy_video_stream(url: str, request: Request):
 @router.get("/api/thumbnail")
 async def proxy_thumbnail(url: str):
     """代理缩略图请求，解决混合内容和防盗链问题。"""
-    from urllib.parse import urlparse
-
     if url.startswith("http://"):
         url = "https://" + url[7:]
 
-    # CDN 域名 → 所属平台 Referer 映射
-    _CDN_REFERER = {
-        'xhscdn.com':       'https://www.xiaohongshu.com/',
-        'hdslb.com':        'https://www.bilibili.com/',
-        'bilivideo.com':    'https://www.bilibili.com/',
-        'douyinvod.com':    'https://www.douyin.com/',
-        '365yg.com':        'https://www.douyin.com/',
-        'amemv.com':        'https://www.douyin.com/',
-        'pstatp.com':       'https://www.douyin.com/',
-        'ixigua.com':       'https://www.ixigua.com/',
-        'ytimg.com':        'https://www.youtube.com/',
-        'googlevideo.com':  'https://www.youtube.com/',
-    }
-
-    netloc = urlparse(url).netloc
-    referer = next(
-        (v for k, v in _CDN_REFERER.items() if netloc.endswith(k)),
-        None,
-    )
+    referer = _get_cdn_referer(url)
 
     def _fetch():
         headers = {
