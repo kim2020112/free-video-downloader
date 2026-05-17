@@ -40,6 +40,10 @@ def _ensure_table():
             conn.execute("ALTER TABLE ai_cache ADD COLUMN fingerprint TEXT DEFAULT ''")
         except sqlite3.OperationalError:
             pass
+        try:
+            conn.execute("ALTER TABLE ai_cache ADD COLUMN part_info TEXT DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_ai_cache_url_hash ON ai_cache(url_hash)
         """)
@@ -62,7 +66,7 @@ def get_cached(url: str, fingerprint: str = None) -> dict | None:
         # 指纹优先（多P视频跳过）
         if fingerprint and not is_multipart:
             row = conn.execute(
-                "SELECT url, video_title, subtitle_text, source, result_json, created_at, updated_at FROM ai_cache WHERE fingerprint = ?",
+                "SELECT url, video_title, subtitle_text, source, result_json, part_info, created_at, updated_at FROM ai_cache WHERE fingerprint = ?",
                 (fingerprint,),
             ).fetchone()
             # 同视频但不同 URL：更新 url_hash 映射
@@ -76,7 +80,7 @@ def get_cached(url: str, fingerprint: str = None) -> dict | None:
         # URL hash 兜底
         if not row:
             row = conn.execute(
-                "SELECT url, video_title, subtitle_text, source, result_json, created_at, updated_at FROM ai_cache WHERE url_hash = ?",
+                "SELECT url, video_title, subtitle_text, source, result_json, part_info, created_at, updated_at FROM ai_cache WHERE url_hash = ?",
                 (h,),
             ).fetchone()
     if not row:
@@ -87,12 +91,13 @@ def get_cached(url: str, fingerprint: str = None) -> dict | None:
         "subtitle_text": row[2],
         "source": row[3],
         "result_json": row[4],
-        "created_at": row[5],
-        "updated_at": row[6],
+        "part_info": row[5] or "",
+        "created_at": row[6],
+        "updated_at": row[7],
     }
 
 
-def save_cache(url: str, video_title: str = "", subtitle_text: str = "", source: str = "", result_json: str = "", fingerprint: str = None):
+def save_cache(url: str, video_title: str = "", subtitle_text: str = "", source: str = "", result_json: str = "", fingerprint: str = None, part_info: str = ""):
     """保存或更新 AI 结果缓存。有指纹时按指纹去重，避免同视频多 URL 产生多条记录。"""
     h = _url_hash(url)
     tz = timezone(timedelta(hours=8))
@@ -103,21 +108,21 @@ def save_cache(url: str, video_title: str = "", subtitle_text: str = "", source:
             existing = conn.execute("SELECT url_hash FROM ai_cache WHERE fingerprint = ?", (fingerprint,)).fetchone()
             if existing:
                 conn.execute(
-                    "UPDATE ai_cache SET url=?, url_hash=?, video_title=?, subtitle_text=?, source=?, result_json=?, updated_at=? WHERE fingerprint=?",
-                    (url, h, video_title, subtitle_text, source, result_json, now, fingerprint),
+                    "UPDATE ai_cache SET url=?, url_hash=?, video_title=?, subtitle_text=?, source=?, result_json=?, updated_at=?, part_info=? WHERE fingerprint=?",
+                    (url, h, video_title, subtitle_text, source, result_json, now, part_info, fingerprint),
                 )
                 return
         # 无指纹或指纹未命中：按 url_hash 更新/插入
         existing = conn.execute("SELECT url_hash FROM ai_cache WHERE url_hash = ?", (h,)).fetchone()
         if existing:
             conn.execute(
-                "UPDATE ai_cache SET video_title=?, subtitle_text=?, source=?, result_json=?, updated_at=?, fingerprint=COALESCE(NULLIF(?, ''), fingerprint) WHERE url_hash=?",
-                (video_title, subtitle_text, source, result_json, now, fingerprint or '', h),
+                "UPDATE ai_cache SET video_title=?, subtitle_text=?, source=?, result_json=?, updated_at=?, fingerprint=COALESCE(NULLIF(?, ''), fingerprint), part_info=? WHERE url_hash=?",
+                (video_title, subtitle_text, source, result_json, now, fingerprint or '', part_info, h),
             )
         else:
             conn.execute(
-                "INSERT INTO ai_cache (url_hash, url, fingerprint, video_title, subtitle_text, source, result_json, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
-                (h, url, fingerprint or '', video_title, subtitle_text, source, result_json, now, now),
+                "INSERT INTO ai_cache (url_hash, url, fingerprint, video_title, subtitle_text, source, result_json, part_info, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (h, url, fingerprint or '', video_title, subtitle_text, source, result_json, part_info, now, now),
             )
             conn.execute(
                 "DELETE FROM ai_cache WHERE url_hash NOT IN (SELECT url_hash FROM ai_cache ORDER BY updated_at DESC LIMIT 50)"
@@ -128,7 +133,7 @@ def list_history(limit: int = 20) -> list[dict]:
     """列出历史学习记录。"""
     with sqlite3.connect(str(DB_PATH)) as conn:
         rows = conn.execute(
-            "SELECT url, video_title, source, result_json, created_at FROM ai_cache ORDER BY updated_at DESC LIMIT ?",
+            "SELECT url, video_title, source, result_json, part_info, created_at FROM ai_cache ORDER BY updated_at DESC LIMIT ?",
             (limit,),
         ).fetchall()
     results = []
@@ -144,7 +149,8 @@ def list_history(limit: int = 20) -> list[dict]:
             "summary": result.get("summary", ""),
             "notes": result.get("notes", ""),
             "flashcards": result.get("flashcards", []),
-            "created_at": row[4],
+            "part_info": row[4] or "",
+            "created_at": row[5],
         })
     return results
 

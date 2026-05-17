@@ -245,16 +245,19 @@ const platforms = [
 
 @media (max-width: 768px) {
   .hero-section {
-    padding: 2.5rem 1rem 2rem;
+    padding: 2rem 1rem 1.5rem;
   }
 
   .hero-title {
-    font-size: 1.75rem;
+    font-size: 1.5rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .hero-subtitle {
-    font-size: 0.875rem;
-    margin-bottom: 1.5rem;
+    font-size: 0.8125rem;
+    margin-bottom: 1.25rem;
     line-height: 1.5;
   }
 
@@ -264,12 +267,12 @@ const platforms = [
   }
 
   .hero-input {
-    padding: 0.875rem 1rem 0.875rem 2.75rem;
-    font-size: 0.875rem;
+    padding: 0.75rem 0.875rem 0.75rem 2.5rem;
+    font-size: 1rem;
   }
 
   .input-icon {
-    left: 0.875rem;
+    left: 0.75rem;
     width: 18px;
     height: 18px;
   }
@@ -283,7 +286,7 @@ const platforms = [
   .trust-badges {
     flex-wrap: wrap;
     gap: 0.5rem;
-    margin-bottom: 1.5rem;
+    margin-bottom: 1.25rem;
   }
 
   .trust-badge {

@@ -30,10 +30,13 @@
 
 - **移动端响应式适配**（`frontend/src/components/HeroSection.vue` + `frontend/src/components/AiSummary.vue` + `frontend/src/App.vue`）：
   - HeroSection：768px 以下输入框+按钮改为垂直堆叠，按钮全宽，标题/副标题缩小
+  - HeroSection：标题 `white-space: nowrap` + `text-overflow: ellipsis`，防止"VideoMind AI 视频学习助手"在窄屏断行成"手"独占一行
+  - HeroSection：输入框 `font-size: 1rem`（16px），避免 iOS 自动缩放
   - AiSummary：子 Tab 按钮缩小（padding/font-size），横向滚动显示细滚动条
   - AiSummary：笔记/问答/摘要内容区使用 `vh` 单位，适配手机屏幕高度
   - AiSummary：分P选择器按钮在手机上缩小显示
   - App.vue：视频卡片 padding 缩小，视频标题/元数据字体缩小，格式网格单列，分P列表适配
+  - 遵循 ui-ux-pro-max 规范：触控目标 ≥44px、输入框 ≥16px 防缩放、无水平溢出
 
 ---
 

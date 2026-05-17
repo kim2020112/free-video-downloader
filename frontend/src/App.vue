@@ -447,6 +447,7 @@ function formatTime(timestamp) {
               <img v-if="item.thumbnail_url" :src="'/api/thumbnail?url=' + encodeURIComponent(item.thumbnail_url)" class="drawer-thumb" />
               <div class="drawer-item-info">
                 <span class="drawer-item-title">{{ item.title }}</span>
+                <span v-if="item.part_info" class="drawer-item-part">{{ item.part_info }}</span>
                 <span class="drawer-item-time">{{ item.platform }} · {{ item.created_at?.slice(0, 10) }}</span>
               </div>
               <button
@@ -1947,6 +1948,7 @@ function formatTime(timestamp) {
 .drawer-thumb { width: 64px; height: 40px; object-fit: cover; border-radius: 4px; flex-shrink: 0; }
 .drawer-item-info { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
 .drawer-item-title { font-size: 0.8125rem; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.drawer-item-part { font-size: 0.75rem; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .drawer-item-time { font-size: 0.75rem; color: var(--text-muted); }
 .drawer-delete-btn {
   flex-shrink: 0;

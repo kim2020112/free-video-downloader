@@ -66,6 +66,28 @@ function scrollParts(dir) {
   el.scrollBy({ left: dir * 200, behavior: 'smooth' })
 }
 
+// 分P标题 tooltip
+const tooltip = ref({ visible: false, text: '', x: 0, y: 0 })
+let tooltipTimer = null
+
+function showTooltip(e, text) {
+  clearTimeout(tooltipTimer)
+  tooltipTimer = setTimeout(() => {
+    const rect = e.target.closest('.parts-nav-btn').getBoundingClientRect()
+    tooltip.value = {
+      visible: true,
+      text,
+      x: rect.left + rect.width / 2,
+      y: rect.top - 8,
+    }
+  }, 400)
+}
+
+function hideTooltip() {
+  clearTimeout(tooltipTimer)
+  tooltip.value.visible = false
+}
+
 watch(() => props.multiParts, () => {
   nextTick(() => updateScrollState())
 }, { immediate: true })
@@ -701,7 +723,8 @@ function downloadNotes() {
               loading: loading && currentSummarizePart === part.index
             }"
             @click="onSwitchPart && onSwitchPart(part.index)"
-            :title="part.title"
+            @mouseenter="showTooltip($event, part.title)"
+            @mouseleave="hideTooltip"
           >
             <span class="parts-nav-index">P{{ part.index }}</span>
             <span class="parts-nav-title">{{ part.title }}</span>
@@ -712,6 +735,12 @@ function downloadNotes() {
           <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"/></svg>
         </button>
       </div>
+      <!-- 分P标题 tooltip -->
+      <Teleport to="body">
+        <div v-if="tooltip.visible" class="parts-tooltip" :style="{ left: tooltip.x + 'px', top: tooltip.y + 'px' }">
+          {{ tooltip.text }}
+        </div>
+      </Teleport>
 
       <!-- 子 Tab 栏 -->
       <div class="sub-tab-bar">
@@ -993,15 +1022,16 @@ function downloadNotes() {
 .parts-nav-arrow svg { width: 14px; height: 14px; }
 .parts-nav-arrow.left { margin-right: 0.25rem; }
 .parts-nav-arrow.right { margin-left: 0.25rem; }
-.parts-nav-btn { display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.4rem 0.75rem; background: rgba(255,255,255,0.04); border: 1px solid var(--border); border-radius: 8px; color: var(--text-muted); font-size: 0.8125rem; cursor: pointer; transition: all 0.2s; white-space: nowrap; flex-shrink: 0; max-width: 200px; }
+.parts-nav-btn { display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.4rem 0.75rem; background: rgba(255,255,255,0.04); border: 1px solid var(--border); border-radius: 8px; color: var(--text-muted); font-size: 0.8125rem; cursor: pointer; transition: all 0.2s; white-space: nowrap; flex-shrink: 0; }
 .parts-nav-btn:hover { background: rgba(255,255,255,0.08); color: var(--text-secondary); border-color: rgba(255,255,255,0.12); }
 .parts-nav-btn.active { background: rgba(99,102,241,0.12); border-color: rgba(99,102,241,0.4); color: var(--accent-blue, #818CF8); }
 .parts-nav-btn.loading { pointer-events: none; opacity: 0.8; }
 .parts-nav-index { font-weight: 600; font-size: 0.75rem; color: var(--accent-blue, #818CF8); opacity: 0.8; }
 .parts-nav-btn.active .parts-nav-index { opacity: 1; }
-.parts-nav-title { overflow: hidden; text-overflow: ellipsis; }
+.parts-nav-title { }
 .parts-nav-spinner { width: 12px; height: 12px; border: 2px solid rgba(99,102,241,0.3); border-top-color: var(--accent-blue, #818CF8); border-radius: 50%; animation: spin 0.8s linear infinite; flex-shrink: 0; }
 @keyframes spin { to { transform: rotate(360deg); } }
+.parts-tooltip { position: fixed; transform: translateX(-50%) translateY(-100%); padding: 0.375rem 0.75rem; background: rgba(15,23,42,0.95); color: #e2e8f0; font-size: 0.75rem; border-radius: 6px; pointer-events: none; z-index: 9999; max-width: 400px; white-space: normal; word-break: break-all; line-height: 1.4; box-shadow: 0 4px 12px rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); }
 
 .sub-tab-bar { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 1.25rem; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
 .sub-tab-bar::-webkit-scrollbar { display: none; }

@@ -143,7 +143,7 @@ def extract_bilibili_subtitle_by_cid(bvid: str, cid: int, aid: int = None) -> di
             headers=headers,
         )
         dm_data = json.loads(urllib.request.urlopen(dm_req, timeout=15).read())
-        subtitle_list = dm_data.get('data', {}).get('subtitle', {}).get('subtitles', [])
+        subtitle_list = dm_data.get('data', {}).get('subtitle', {}).get('subtitles') or []
 
         if not subtitle_list:
             return None

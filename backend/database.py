@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS videos (
     description TEXT,
     status TEXT DEFAULT 'pending',
     error_message TEXT,
+    part_info TEXT DEFAULT '',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -85,6 +86,11 @@ def get_db():
 def init_db():
     with get_db() as conn:
         conn.executescript(_SCHEMA)
+        # 迁移：添加 part_info 列
+        try:
+            conn.execute("ALTER TABLE videos ADD COLUMN part_info TEXT DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass
     print(f"[数据库] 初始化完成: {DB_PATH}")
 
 
@@ -123,17 +129,32 @@ def get_subtitle_from_db(url: str) -> dict | None:
     }
 
 
-def save_subtitle_to_db(url: str, source: str, language: str, full_text: str, title: str = "", platform: str = ""):
+def save_subtitle_to_db(url: str, source: str, language: str, full_text: str, title: str = "", platform: str = "", part_info: str = ""):
     """将字幕文本持久化到 subtitles 表。覆盖同 URL 的旧字幕。"""
     with get_db() as conn:
         # 确保 video 记录存在
-        existing = conn.execute("SELECT id FROM videos WHERE url = ?", (url,)).fetchone()
+        existing = conn.execute("SELECT id, title, platform FROM videos WHERE url = ?", (url,)).fetchone()
         if existing:
             video_id = existing["id"]
+            # 补全缺失的 title/platform/part_info
+            updates = []
+            params = []
+            if title and not existing["title"]:
+                updates.append("title = ?")
+                params.append(title)
+            if platform and not existing["platform"]:
+                updates.append("platform = ?")
+                params.append(platform)
+            if part_info:
+                updates.append("part_info = ?")
+                params.append(part_info)
+            if updates:
+                params.append(video_id)
+                conn.execute(f"UPDATE videos SET {', '.join(updates)} WHERE id = ?", params)
         else:
             cursor = conn.execute(
-                "INSERT INTO videos (url, title, platform) VALUES (?, ?, ?)",
-                (url, title, platform),
+                "INSERT INTO videos (url, title, platform, part_info) VALUES (?, ?, ?, ?)",
+                (url, title, platform, part_info),
             )
             video_id = cursor.lastrowid
         # 先删除该 video 的旧字幕，再插入

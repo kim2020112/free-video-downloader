@@ -34,6 +34,24 @@ from api.summary_routes import (
 router = APIRouter()
 
 
+def _build_part_info(url: str, info=None, parts: list = None) -> str:
+    """从 URL 和视频信息构建分P描述（如 'P2: 第一章-01-什么是Agent'）。"""
+    p_match = re.search(r'[?&]p=(\d+)', url)
+    if not p_match:
+        return ""
+    p_index = int(p_match.group(1))
+    # 从 info.parts 或 parts 列表中查找
+    part_list = parts or (getattr(info, 'parts', None) or []) if info else []
+    def _get(obj, attr):
+        return obj.get(attr) if isinstance(obj, dict) else getattr(obj, attr, None)
+    part = next((p for p in part_list if _get(p, 'index') == p_index), None)
+    if part:
+        title = _get(part, 'title') or ''
+        if title:
+            return f"P{p_index}: {title}"
+    return f"P{p_index}"
+
+
 async def _sse_generator(sync_gen):
     """将同步 (event_type, data) generator 转为 SSE 字节流。
     使用 asyncio.Queue 实现真正的实时流式传输，不再缓冲。"""
@@ -75,6 +93,9 @@ async def _get_subtitle_text(url: str, info, lang: str = None, fingerprint: str 
     # ── DB 缓存检查 ──
     cached_sub = get_subtitle_from_db(url)
     if cached_sub and len(cached_sub["full_text"].strip()) >= 50:
+        # 补全缺失的 title/platform/part_info
+        _pi = _build_part_info(url, info=info)
+        save_subtitle_to_db(url, cached_sub["source"], cached_sub["language"], cached_sub["full_text"], info.title, platform, part_info=_pi)
         return cached_sub["full_text"], cached_sub["source"], cached_sub["language"]
 
     # ── Pipeline 1: Bilibili CC 字幕 API ──
@@ -95,7 +116,8 @@ async def _get_subtitle_text(url: str, info, lang: str = None, fingerprint: str 
     if bilibili_sub and bilibili_sub['has_subtitle']:
         text = bilibili_sub['full_text']
         sub_lang = bilibili_sub.get('language', 'zh')
-        save_subtitle_to_db(url, "bilibili_cc", sub_lang, bilibili_sub['text'], info.title, platform)
+        _pi = _build_part_info(url, info=info)
+        save_subtitle_to_db(url, "bilibili_cc", sub_lang, bilibili_sub['text'], info.title, platform, part_info=_pi)
         return text, "bilibili_cc", sub_lang
 
     # ── Pipeline 2: yt-dlp 原生字幕 ──
@@ -112,7 +134,8 @@ async def _get_subtitle_text(url: str, info, lang: str = None, fingerprint: str 
                     subtitle_text = clean_subtitle_text(raw_content, ext)
                 if subtitle_text and len(subtitle_text.strip()) >= 50:
                     source = "youtube_auto" if selected.is_auto else "ytdlp_native"
-                    save_subtitle_to_db(url, source, selected.lang, subtitle_text, info.title, platform)
+                    _pi = _build_part_info(url, info=info)
+                    save_subtitle_to_db(url, source, selected.lang, subtitle_text, info.title, platform, part_info=_pi)
                     return subtitle_text, source, selected.lang
             except Exception:
                 pass
@@ -123,7 +146,8 @@ async def _get_subtitle_text(url: str, info, lang: str = None, fingerprint: str 
             return None, "", ""
         cached_whisper = get_whisper_cache(url, fingerprint=fingerprint)
         if cached_whisper and len(cached_whisper.strip()) >= 20:
-            save_subtitle_to_db(url, "whisper", lang or "auto", cached_whisper, info.title, platform)
+            _pi = _build_part_info(url, info=info)
+            save_subtitle_to_db(url, "whisper", lang or "auto", cached_whisper, info.title, platform, part_info=_pi)
             return cached_whisper, "whisper", lang or "auto"
 
         try:
@@ -145,7 +169,8 @@ async def _get_subtitle_text(url: str, info, lang: str = None, fingerprint: str 
                         print(f"[SubtitleCorrection] 校正失败，使用原始文本: {e}")
                         corrected = whisper_text
                 save_whisper_cache(url, corrected, lang or "auto", whisper_text, fingerprint=fingerprint)
-                save_subtitle_to_db(url, "whisper", lang or "auto", corrected, info.title, platform)
+                _pi = _build_part_info(url, info=info)
+                save_subtitle_to_db(url, "whisper", lang or "auto", corrected, info.title, platform, part_info=_pi)
                 return corrected, "whisper", lang or "auto"
         except asyncio.TimeoutError:
             pass
@@ -174,6 +199,10 @@ async def summarize_stream(req: SummarizeRequest):
 
         if cached and cached.get("result_json") and req.mode == "full" and not req.force:
             result_data = json.loads(cached["result_json"])
+            # 确保 videos 表有记录（历史记录依赖此表）
+            from database import save_subtitle_to_db as _save_sub
+            _save_sub(url, cached.get("source", ""), "", cached.get("subtitle_text", ""),
+                      cached.get("video_title", ""), part_info=cached.get("part_info", ""))
 
             def _replay():
                 yield ("progress", {"stage": "cache_hit", "message": "已有学习记录，直接加载"})
@@ -245,7 +274,8 @@ async def summarize_stream(req: SummarizeRequest):
                             corrected = whisper_text
                     save_whisper_cache(cache_url, corrected, req.lang or "auto", whisper_text, fingerprint=fp)
                     if cached and cached.get("result_json"):
-                        save_cache(cache_url, video_title, corrected, "whisper", cached["result_json"], fingerprint=fp)
+                        _pi = _build_part_info(cache_url, info=locals().get('info'), parts=(cached_info or {}).get('parts'))
+                        save_cache(cache_url, video_title, corrected, "whisper", cached["result_json"], fingerprint=fp, part_info=_pi)
 
                 def _gen_subtitle():
                     yield ("progress", {"stage": "subtitle_transcribing", "message": "正在用 Whisper 重新语音识别..."})
@@ -323,7 +353,8 @@ async def summarize_stream(req: SummarizeRequest):
                     yield ("done", {})
                     return
 
-                save_cache(cache_url, video_title, subtitle_text, sub_source, merged, fingerprint=fp)
+                _pi = _build_part_info(cache_url, info=locals().get('info'), parts=(cached_info or {}).get('parts'))
+                save_cache(cache_url, video_title, subtitle_text, sub_source, merged, fingerprint=fp, part_info=_pi)
                 yield ("done", {})
 
             return StreamingResponse(
@@ -357,15 +388,17 @@ async def summarize_stream(req: SummarizeRequest):
                 desc = cached_info.get("description", "")
                 title = cached_info.get("title", "")
                 duration = cached_info.get("duration", 0)
+                _is_bili = 'bilibili' in url.lower()
+                _no_cc_msg = "该B站视频没有CC字幕，" if _is_bili else ""
                 if not desc or len(desc.strip()) < 20:
-                    raise HTTPException(status_code=400, detail=f"{_long_video_msg}。该视频也没有简介，无法生成 AI 总结")
+                    raise HTTPException(status_code=400, detail=f"{_no_cc_msg}{_long_video_msg}。该视频也没有简介，无法生成 AI 总结")
 
                 def _gen_desc_fast():
-                    yield ("warn", {"message": f"视频时长 {int(duration)} 秒超过 {WHISPER_MAX_DURATION} 秒限制，跳过语音识别"})
+                    yield ("warn", {"message": f"{_no_cc_msg}视频时长 {int(duration)} 秒超过 {WHISPER_MAX_DURATION} 秒限制，跳过语音识别"})
                     yield ("progress", {"stage": "summary_generating", "message": "正在基于视频简介生成总结..."})
                     result = summarize_from_description(title, desc)
                     inc_summarize_usage()
-                    result["summary"] = f"⚠️ {_long_video_msg}，以下总结基于视频简介生成，仅供参考。\n\n" + result.get("summary", "")
+                    result["summary"] = f"⚠️ {_no_cc_msg}{_long_video_msg}，以下总结基于视频简介生成，仅供参考。\n\n" + result.get("summary", "")
                     yield ("result", result)
                     yield ("done", {})
 
@@ -414,14 +447,16 @@ async def summarize_stream(req: SummarizeRequest):
 
         # ── 无字幕降级 ──
         if not subtitle_text:
+            _is_bili = 'bilibili' in (info.extractor or '').lower()
+            _no_cc_msg = "该B站视频没有CC字幕，" if _is_bili else ""
             if not info.description or len(info.description.strip()) < 20:
                 if info.duration and info.duration > WHISPER_MAX_DURATION:
-                    raise HTTPException(status_code=400, detail=f"视频时长 {int(info.duration)} 秒，超过 {WHISPER_MAX_DURATION} 秒限制，不支持语音识别。请尝试有字幕的视频")
+                    raise HTTPException(status_code=400, detail=f"{_no_cc_msg}视频时长 {int(info.duration)} 秒，超过 {WHISPER_MAX_DURATION} 秒限制，不支持语音识别。请尝试有字幕的视频")
                 raise HTTPException(status_code=400, detail="该视频没有字幕也没有简介，无法生成 AI 总结")
 
             def _gen_no_sub():
                 if info.duration and info.duration > WHISPER_MAX_DURATION:
-                    yield ("warn", {"message": f"视频时长 {int(info.duration)} 秒超过 {WHISPER_MAX_DURATION} 秒限制，跳过语音识别"})
+                    yield ("warn", {"message": f"{_no_cc_msg}视频时长 {int(info.duration)} 秒超过 {WHISPER_MAX_DURATION} 秒限制，跳过语音识别"})
                 else:
                     yield ("warn", {"message": "该视频无字幕，将基于视频简介生成总结"})
                 yield ("progress", {"stage": "summary_generating", "message": "正在基于视频简介生成总结..."})
@@ -554,7 +589,7 @@ async def summarize_stream(req: SummarizeRequest):
                 "mindmap_markdown": mindmap_md,
                 "notes": notes_full,
             }, ensure_ascii=False)
-            save_cache(canonical_url, info.title, subtitle_text, sub_source, save_cache_json, fingerprint=fp)
+            save_cache(canonical_url, info.title, subtitle_text, sub_source, save_cache_json, fingerprint=fp, part_info=_build_part_info(canonical_url, info=info))
 
             yield ("done", {})
 

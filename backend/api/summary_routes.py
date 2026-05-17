@@ -5,11 +5,12 @@
 
 import asyncio
 import datetime
+import re
 
 from fastapi import APIRouter, HTTPException
 
 from core.summary_models import SummarizeRequest, SummaryResult, ChapterItem, MindMapNode
-from core.summarizer import clean_subtitle_text, summarize_subtitle, summarize_from_description
+from core.summarizer import clean_subtitle_text, summarize_subtitle, summarize_from_description, extract_bilibili_subtitle, extract_bilibili_subtitle_by_cid
 from core.whisper import transcribe_video, is_model_available
 from core.cache import get_whisper_cache, save_whisper_cache, get_video_info_cache, save_video_info_cache, video_fingerprint
 from core.ai_client import correct_subtitle
@@ -69,19 +70,38 @@ async def summarize_video(req: SummarizeRequest):
         # 视频信息缓存预检：已缓存的超长视频直接跳过
         cached_info = get_video_info_cache(url)
         if cached_info and cached_info.get("duration", 0) > WHISPER_MAX_DURATION:
-            desc = cached_info.get("description", "")
-            title = cached_info.get("title", "")
-            if not desc or len(desc.strip()) < 20:
-                raise HTTPException(status_code=400, detail=f"视频时长 {int(cached_info['duration'])} 秒超过 {WHISPER_MAX_DURATION} 秒限制，不支持语音识别。该视频也没有简介，无法生成 AI 总结")
-            result = await asyncio.get_event_loop().run_in_executor(
-                None, summarize_from_description, title, desc
-            )
-            _summarize_usage[today] = used + 1
-            return SummaryResult(
-                summary=f"⚠️ 视频时长 {int(cached_info['duration'])} 秒超过 {WHISPER_MAX_DURATION} 秒限制，以下总结基于视频简介生成，仅供参考。\n\n" + result.get("summary", ""),
-                chapters=[ChapterItem(**ch) for ch in result.get("chapters", [])],
-                mindmap=MindMapNode(title=title[:20], children=[]),
-            )
+            # B站视频可能有 CC 字幕，先尝试获取
+            bilibili_sub = None
+            if 'bilibili' in url.lower():
+                p_match_fp = re.search(r'[?&]p=(\d+)', url)
+                if p_match_fp:
+                    parts_fp = cached_info.get('parts', []) or []
+                    p_idx = int(p_match_fp.group(1))
+                    part_fp = next((p for p in parts_fp if p.get('index') == p_idx), None)
+                    if part_fp and part_fp.get('cid'):
+                        bvid_fp = re.search(r'(BV\w+)', url)
+                        if bvid_fp:
+                            bilibili_sub = extract_bilibili_subtitle_by_cid(bvid_fp.group(1), part_fp['cid'])
+                if not bilibili_sub:
+                    bilibili_sub = extract_bilibili_subtitle(url)
+            if bilibili_sub and bilibili_sub.get('has_subtitle'):
+                pass  # 有 B站 CC 字幕，跳过快速路径，走正常 AI 管线
+            else:
+                desc = cached_info.get("description", "")
+                title = cached_info.get("title", "")
+                _is_bili = 'bilibili' in url.lower()
+                _no_cc_msg = "该B站视频没有CC字幕，" if _is_bili else ""
+                if not desc or len(desc.strip()) < 20:
+                    raise HTTPException(status_code=400, detail=f"{_no_cc_msg}视频时长 {int(cached_info['duration'])} 秒超过 {WHISPER_MAX_DURATION} 秒限制，不支持语音识别。该视频也没有简介，无法生成 AI 总结")
+                result = await asyncio.get_event_loop().run_in_executor(
+                    None, summarize_from_description, title, desc
+                )
+                _summarize_usage[today] = used + 1
+                return SummaryResult(
+                    summary=f"⚠️ {_no_cc_msg}视频时长 {int(cached_info['duration'])} 秒超过 {WHISPER_MAX_DURATION} 秒限制，以下总结基于视频简介生成，仅供参考。\n\n" + result.get("summary", ""),
+                    chapters=[ChapterItem(**ch) for ch in result.get("chapters", [])],
+                    mindmap=MindMapNode(title=title[:20], children=[]),
+                )
 
         info = downloader.parse_info(url)
         fp = video_fingerprint(info.extractor, info.id) if info.extractor and info.id else None

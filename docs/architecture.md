@@ -289,7 +289,7 @@ data: {"type": "done", "data": {}}
 ```
 App.vue
 ├── NavBar.vue                 # 顶部导航（毛玻璃效果，Logo + 导航菜单 + 登录/立即使用按钮）
-├── HeroSection.vue            # Hero 区域（深色背景 + 光晕 + 标题 + 输入框 + 下载按钮 + 平台标签流）
+├── HeroSection.vue            # Hero 区域（深色背景 + 光晕 + 标题 + 输入框 + 下载按钮 + 平台标签流，移动端纵向堆叠）
 ├── results section (内联)     # 解析结果区域（仅在有结果或错误时显示）
 │   ├── error-card             # 错误提示（红色半透明背景）
 │   ├── video-card             # 视频信息卡片
@@ -302,7 +302,7 @@ App.vue
 │   │   │   ├── download-button    # 下载按钮（蓝青渐变，全宽）
 │   │   │   └── progress-card      # 下载进度（shimmer动画，状态图标+边框变色）
 │   │   └── [AI 总结标签页]
-│   │       └── AiSummary.vue      # AI 总结组件（内含：分P选择器 + 字幕加载状态 + 流式摘要 + 章节大纲 + 思维导图 + 学习笔记 + AI 问答，Markdown 渲染）
+│   │       └── AiSummary.vue      # AI 总结组件（内含：分P选择器 + 字幕加载状态 + 流式摘要 + 章节大纲 + 思维导图 + 学习笔记 + AI 问答，Markdown 渲染，移动端 Tab/内容区自适应）
 │   └── history-card           # 下载记录（状态图标+标题+时间戳+保存按钮）
 ├── FeaturesSection.vue        # 特性展示区（6 个卡片，3 列排列，含 2 个 Pro 卡片）
 └── FooterSection.vue          # 页脚（品牌 + 链接 + 平台列表 + 版权）

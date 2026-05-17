@@ -17,6 +17,22 @@ from api.summary_routes import _select_subtitle_lang
 router = APIRouter()
 
 
+def _build_part_info(url: str, info=None) -> str:
+    """从 URL 和视频信息中提取分P信息。"""
+    p_match = _re.search(r'[?&]p=(\d+)', url)
+    if not p_match:
+        return ""
+    p_index = int(p_match.group(1))
+    if info:
+        parts = getattr(info, 'parts', None) or []
+        part = next((p for p in parts if getattr(p, 'index', None) == p_index), None)
+        if part:
+            title = getattr(part, 'title', None) or ''
+            if title:
+                return f"P{p_index}: {title}"
+    return f"P{p_index}"
+
+
 def _build_response(text, lang, name, ext, is_auto, segments=None):
     return {
         "text": text,
@@ -70,7 +86,8 @@ async def get_subtitle_text(
         if bilibili_sub and bilibili_sub['has_subtitle']:
             text = bilibili_sub['text']
             sub_lang = bilibili_sub['language']
-            save_subtitle_to_db(url, "bilibili_cc", sub_lang, bilibili_sub['text'])
+            _pi = _build_part_info(url)
+            save_subtitle_to_db(url, "bilibili_cc", sub_lang, bilibili_sub['text'], part_info=_pi)
             return _build_response(
                 text, sub_lang,
                 f"{sub_lang}（{'自动生成' if bilibili_sub['subtitle_type'] == 'auto' else '人工字幕'}）",
@@ -104,7 +121,8 @@ async def get_subtitle_text(
 
                     if len(clean_text.strip()) >= 20:
                         source = "youtube_auto" if selected.is_auto else "ytdlp_native"
-                        save_subtitle_to_db(canonical_url, source, selected.lang, clean_text, info.title, platform)
+                        _pi = _build_part_info(url, info)
+                        save_subtitle_to_db(canonical_url, source, selected.lang, clean_text, info.title, platform, part_info=_pi)
                         return _build_response(clean_text, selected.lang, selected.name, ext, selected.is_auto)
                 except Exception as e:
                     sub_error = str(e)
@@ -116,7 +134,8 @@ async def get_subtitle_text(
 
             cached_whisper = get_whisper_cache(canonical_url, fingerprint=fp)
             if cached_whisper and len(cached_whisper.strip()) >= 20:
-                save_subtitle_to_db(canonical_url, "whisper", lang or "auto", cached_whisper, info.title, platform)
+                _pi = _build_part_info(url, info)
+                save_subtitle_to_db(canonical_url, "whisper", lang or "auto", cached_whisper, info.title, platform, part_info=_pi)
                 return _build_response(cached_whisper, lang or "auto", f"Whisper 语音识别（{lang or 'auto'}，缓存）", "txt", True)
 
             try:
@@ -140,7 +159,8 @@ async def get_subtitle_text(
                             print(f"[SubtitleCorrection] 校正失败，使用原始文本: {e}")
                             corrected = whisper_text
                     save_whisper_cache(canonical_url, corrected, lang or "auto", whisper_text, fingerprint=fp)
-                    save_subtitle_to_db(canonical_url, "whisper", lang or "auto", corrected, info.title, platform)
+                    _pi = _build_part_info(url, info)
+                    save_subtitle_to_db(canonical_url, "whisper", lang or "auto", corrected, info.title, platform, part_info=_pi)
                     return _build_response(corrected, lang or "auto", f"Whisper 语音识别（{lang or 'auto'}）", "txt", True)
             except asyncio.TimeoutError:
                 if sub_error:

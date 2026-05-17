@@ -79,6 +79,12 @@ FooterSection（品牌 + 链接 + 平台列表 + 版权）
   - 按钮：蓝青渐变，文案"开始学习"，hover 上浮
 - 信任标签：`AI 智能总结 · 结构化笔记 · 思维导图`，`var(--text-muted)`
 - 平台标签流：5 个胶囊标签（B站、YouTube、抖音、小红书、TikTok），hover 时边框变为平台品牌色
+- **移动端（≤768px）**：
+  - 标题 `1.5rem` + `white-space: nowrap` + `text-overflow: ellipsis`，防止窄屏断行
+  - 副标题 `0.8125rem`
+  - 输入框+按钮 `flex-direction: column`，按钮全宽
+  - 输入框 `font-size: 1rem`（16px），避免 iOS 自动缩放
+  - section padding 缩小至 `2rem 1rem 1.5rem`
 
 ### Results Section（App.vue 内联）
 - 仅在 `videoInfo` 或 `error` 存在时渲染
@@ -117,3 +123,23 @@ FooterSection（品牌 + 链接 + 平台列表 + 版权）
 - 圆角统一：按钮 `8-12px`（使用 `var(--radius)` = 12px），卡片 `16px`
 - 过渡：统一 `transition: all 0.2s`
 - 毛玻璃：`backdrop-filter: blur(12-16px)` 用于卡片和导航
+
+## 响应式断点
+
+统一使用 `@media (max-width: 768px)` 作为移动端断点。
+
+| 区域 | 移动端（≤768px） |
+|------|------------------|
+| HeroSection | 标题 `1.5rem` + `nowrap`，输入框+按钮垂直堆叠，输入框 `font-size: 1rem`（防 iOS 缩放） |
+| AiSummary 子 Tab | padding/font 缩小，横向滚动显示细滚动条 |
+| AiSummary 内容区 | `max-height: 50-60vh`，适配手机屏幕高度 |
+| AiSummary 分P选择器 | 按钮缩小，`max-width: 150px` |
+| App 视频卡片 | `flex-direction: column`，缩略图全宽 |
+| App 格式网格 | `grid-template-columns: 1fr`（单列） |
+| App Tab 栏 | padding/font 缩小 |
+
+设计原则（参考 ui-ux-pro-max）：
+- 触控目标 ≥44px（Apple HIG）/ 48dp（Material Design）
+- 输入框 ≥16px 避免 iOS Safari 自动缩放
+- 无水平滚动，内容自适应 viewport
+- 横向滚动容器使用 `scrollbar-width: thin` 保证可发现性
